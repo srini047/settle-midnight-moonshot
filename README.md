@@ -1,25 +1,25 @@
 # Settle — shared negotiation table
 
-For two parties who cannot agree, Settle turns the argument into a live term sheet
-and an AI mediator that pushes them toward a deal. Built on
+For tenants and landlords who cannot agree, Settle turns a rental dispute into a
+shared, researched negotiation workspace. Built on
 [SpacetimeDB](https://spacetimedb.com) (maincloud) with a mobile-first Next.js UI.
 
 ## Flow
 
-1. **Create** a room — pick a matter type, title the dispute, name the two legal party labels,
-   and seed the opening terms. You instantly become the initiating party with a short
-   join code.
+1. **Describe the rental** — provide the state, city, property type, matter title, and
+   the situation in plain language. Settle can extract suggested rental terms for review.
+   Confirm the opening terms and become the initiating party.
 2. **Share the link** (or code) — the other party joins as the responding party on their own device.
-3. **Negotiate live** — both sides edit their positions and reasons; every keypress
-   syncs in real time through SpacetimeDB subscriptions. Make offers, counter, accept,
-   or reject. A gap meter shows how close both sides are.
-4. **Ask the mediator** — a Next.js Route Handler sends the negotiation snapshot,
-   follow-up discussion, and supporting context to OpenAI. The proposal lands back on
-   both tabs via the `submit_agent_proposal` reducer; both parties must accept it before
-   it updates the latest terms.
-5. **Execute the result** — once both parties accept the latest terms, Settle creates a
-   shared live agreement draft that can be edited together and downloaded as a PDF for
-   execution through the parties' chosen signing provider.
+3. **Negotiate live** — each party adds their context and opening positions. Opening
+   values are preserved; later changes happen through proposals. Make offers, counter,
+   accept, or reject. A gap meter shows how close both sides are.
+4. **Ask the mediator** — Settle researches official Indian legal sources, current local
+   market evidence, and lived rental experiences through Tavily before sending the
+   snapshot to OpenAI. The response includes citations and can caution, block, or require
+   human review instead of blindly proposing terms.
+5. **Resolve and execute** — manual and mediator proposals are bilateral. Clauses are
+   compared side by side like a merge conflict. Once both parties accept the terms and
+   resolved clauses, Settle generates a PDF agreement.
 
 ## Architecture
 
@@ -30,21 +30,23 @@ flowchart LR
   STD -->|subscriptions| PartyA
   STD -->|subscriptions| PartyB
   Room[Room UI] -->|snapshot| Mediate["/api/mediate"]
-  Mediate -->|chat completions| OpenAI[OpenAI]
+  Mediate -->|legal + market + lived research| Tavily[Tavily]
+  Mediate -->|researched snapshot| OpenAI[OpenAI]
   Mediate -->|JSON proposal| Room
   Room -->|submit_agent_proposal| STD
   Room -->|shared document| Agreement[Live agreement draft]
 ```
 
 - **Source of truth:** SpacetimeDB tables (`negotiation`, `party`, `term`, `position`,
-  `offer`, `offer_term`, `agent_proposal`, `event`, `presence`). Reducers are the only
+  `offer`, `offer_term`, `agent_proposal`, `agreement_clause`, `event`, `presence`). Reducers are the only
   writers; clients read via subscriptions.
 - **Env** (`.env.local` — AI keys live in `.env`, gitignored):
 
   ```bash
   SPACETIMEDB_DB_NAME=settle
   SPACETIMEDB_HOST=wss://maincloud.spacetimedb.com
-  OPENAI_API_KEY=sk-...            # mediator brain (in .env)
+   OPENAI_API_KEY=sk-...            # mediator brain (in .env)
+   TAVILY_API_KEY=tvly-...          # external research (in .env)
   ```
 
 ## Develop
@@ -81,8 +83,7 @@ only when a deliberate schema reset is required.
 
 1. Open `/` in tab A → create a room → copy the join link.
 2. Open the link in an incognito tab → join as the responding party.
-3. Edit a position in tab A → it updates live in tab B (and vice versa).
-4. Make an offer in one tab → accept/counter/reject from the other.
-5. Ask the mediator → an OpenAI proposal appears on both tabs → accept to see the
-   deal sheet.
-6. Accept the proposal from both tabs and edit the shared agreement draft.
+3. Add the responder's context and opening positions.
+4. Make a proposal in one tab → accept/counter/reject from either side.
+5. Ask the mediator → review its research decision and citations on both tabs.
+6. Resolve clause differences, accept the latest terms from both tabs, and download the PDF.

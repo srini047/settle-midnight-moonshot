@@ -25,6 +25,8 @@ export const AgentProposal = __t.object("AgentProposal", {
   concerns: __t.string(),
   requiredChanges: __t.string(),
   citationsJson: __t.string(),
+  perspective: __t.string(),
+  requestedByPartyId: __t.u64(),
 });
 export type AgentProposal = __Infer<typeof AgentProposal>;
 
@@ -69,6 +71,8 @@ export const MediatorMessage = __t.object("MediatorMessage", {
   authorPartyId: __t.u64(),
   body: __t.string(),
   createdAt: __t.timestamp(),
+  speaker: __t.string(),
+  perspective: __t.string(),
 });
 export type MediatorMessage = __Infer<typeof MediatorMessage>;
 
@@ -88,6 +92,7 @@ export const Negotiation = __t.object("Negotiation", {
   jurisdictionState: __t.string(),
   jurisdictionCity: __t.string(),
   propertyType: __t.string(),
+  responderContext: __t.string(),
 });
 export type Negotiation = __Infer<typeof Negotiation>;
 
@@ -98,6 +103,8 @@ export const Offer = __t.object("Offer", {
   status: __t.string(),
   note: __t.string(),
   createdAt: __t.timestamp(),
+  acceptedByA: __t.bool(),
+  acceptedByB: __t.bool(),
 });
 export type Offer = __Infer<typeof Offer>;
 
@@ -107,6 +114,9 @@ export const OfferTerm = __t.object("OfferTerm", {
   termId: __t.u64(),
   valueA: __t.string(),
   valueB: __t.string(),
+  previousValueA: __t.string(),
+  previousValueB: __t.string(),
+  previousCaptured: __t.bool(),
 });
 export type OfferTerm = __Infer<typeof OfferTerm>;
 

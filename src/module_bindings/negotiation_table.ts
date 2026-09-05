@@ -26,4 +26,5 @@ export default __t.row({
   jurisdictionState: __t.string().name("jurisdiction_state"),
   jurisdictionCity: __t.string().name("jurisdiction_city"),
   propertyType: __t.string().name("property_type"),
+  responderContext: __t.string().name("responder_context"),
 });

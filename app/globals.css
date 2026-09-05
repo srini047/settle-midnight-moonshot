@@ -89,6 +89,15 @@ button:disabled {
   line-height: 0.95;
 }
 
+.product-kicker {
+  margin-top: 1.5rem;
+  color: var(--accent);
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
 .lede {
   margin-top: 0.75rem;
   font-size: 1.05rem;
@@ -350,6 +359,23 @@ textarea {
   font-size: 0.95rem;
 }
 
+.compact-term-list {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.compact-term-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 0.8fr);
+  gap: 0.55rem;
+}
+
+@media (max-width: 520px) {
+  .compact-term-row {
+    grid-template-columns: 1fr;
+  }
+}
+
 .term-definition-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.85fr) minmax(0, 1.35fr) minmax(0, 0.85fr);
@@ -408,6 +434,15 @@ textarea {
   color: var(--warn);
   background: color-mix(in srgb, var(--warn) 8%, var(--foam));
   font-size: 0.88rem;
+}
+
+.analysis-status.warning {
+  margin: 0;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid color-mix(in srgb, var(--warn) 38%, var(--line));
+  border-radius: 10px;
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 8%, var(--foam));
 }
 
 .label-with-help {
@@ -740,6 +775,11 @@ textarea {
   background: color-mix(in srgb, var(--accent) 9%, transparent);
 }
 
+.term-version.proposed {
+  border: 1px dashed color-mix(in srgb, var(--accent) 45%, var(--line));
+  background: color-mix(in srgb, var(--accent) 12%, var(--foam));
+}
+
 .action-bar {
   display: grid;
   gap: 0.6rem;
@@ -857,6 +897,31 @@ textarea {
   padding: 0.7rem;
   border-radius: 10px;
   background: color-mix(in srgb, var(--accent) 7%, var(--foam));
+}
+
+.clause-current {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.8rem;
+  border: 1px solid color-mix(in srgb, var(--ok) 34%, var(--line));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--ok) 8%, var(--foam));
+}
+
+.clause-current p {
+  line-height: 1.45;
+}
+
+.clause-originals {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.clause-originals summary {
+  cursor: pointer;
+  color: var(--ink-soft);
+  font-size: 0.82rem;
+  font-weight: 700;
 }
 
 .clause-resolution p {

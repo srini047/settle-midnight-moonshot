@@ -16,4 +16,6 @@ export default __t.row({
   authorPartyId: __t.u64().name("author_party_id"),
   body: __t.string(),
   createdAt: __t.timestamp().name("created_at"),
+  speaker: __t.string(),
+  perspective: __t.string(),
 });

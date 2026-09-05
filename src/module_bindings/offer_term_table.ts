@@ -16,4 +16,7 @@ export default __t.row({
   termId: __t.u64().name("term_id"),
   valueA: __t.string().name("value_a"),
   valueB: __t.string().name("value_b"),
+  previousValueA: __t.string().name("previous_value_a"),
+  previousValueB: __t.string().name("previous_value_b"),
+  previousCaptured: __t.bool().name("previous_captured"),
 });

@@ -1,7 +1,0 @@
-{
-  "/_not-found/page": "/_not-found",
-  "/room/[code]/agreement/page": "/room/[code]/agreement",
-  "/room/[code]/page": "/room/[code]",
-  "/page": "/",
-  "/api/mediate/route": "/api/mediate"
-}

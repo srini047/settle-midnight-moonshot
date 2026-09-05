@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useReducer, useSpacetimeDB, useTable } from 'spacetimedb/react';
 import { tables, reducers } from '../../../src/module_bindings';
+import mammoth from 'mammoth';
 import type {
   AgentProposal,
   Event,
@@ -13,6 +14,7 @@ import type {
   OfferTerm,
   Party,
   Position,
+  SupportDocument,
   Term,
 } from '../../../src/module_bindings/types';
 
@@ -35,6 +37,20 @@ const EVENT_LABELS: Record<string, string> = {
 
 type TermValues = { valueA: string; valueB: string };
 
+const MAX_SUPPORTING_FILES = 5;
+const MAX_SUPPORTING_FILE_BYTES = 2 * 1024 * 1024;
+
+async function prepareRoomFile(file: File) {
+  if (file.size > MAX_SUPPORTING_FILE_BYTES) throw new Error(`${file.name} is larger than 2 MB.`);
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const isDocx = file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || /\.docx$/i.test(file.name);
+  const isText = file.type.startsWith('text/') || /\.(txt|md|csv|json)$/i.test(file.name);
+  const content = isDocx
+    ? (await mammoth.extractRawText({ arrayBuffer: bytes.slice().buffer })).value
+    : isText ? new TextDecoder().decode(bytes) : '';
+  return { name: file.name, mimeType: file.type || 'application/octet-stream', content, data: bytes };
+}
+
 function fmtTime(micros: bigint): string {
   return new Date(Number(micros / 1000n)).toLocaleTimeString([], {
     hour: '2-digit',
@@ -50,6 +66,15 @@ function fmtElapsed(micros: bigint): string {
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours}h ago`;
   return `${Math.floor(hours / 24)}d ago`;
+}
+
+function bytesToDataUrl(bytes: Uint8Array, mimeType: string): string {
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
+  }
+  return `data:${mimeType};base64,${window.btoa(binary)}`;
 }
 
 function parseProposal(json: string): Array<{ termId: string; valueA: string; valueB: string }> {
@@ -83,32 +108,6 @@ function parseCitations(json: string): Array<{ title: string; url: string; sourc
   }
 }
 
-function numericValue(value: string): number | undefined {
-  const parsed = Number(value.replace(/[^0-9.-]/g, ''));
-  return Number.isFinite(parsed) ? parsed : undefined;
-}
-
-function termValidationMessage(term: Term, valueA: string, valueB: string): string | undefined {
-  if (!valueA.trim() || !valueB.trim()) return 'Both parties need a value before final acceptance.';
-  if (term.valueKind === 'percentage' || term.valueKind === 'currency' || term.valueKind === 'number') {
-    if (numericValue(valueA) === undefined || numericValue(valueB) === undefined) return 'Values must be numeric.';
-  }
-  if (term.validationRule === 'exact_match' && valueA.trim() !== valueB.trim()) return 'Both values must match.';
-  if (term.validationRule === 'pair_sum') {
-    const target = numericValue(term.validationTarget);
-    const a = numericValue(valueA);
-    const b = numericValue(valueB);
-    if (target === undefined || a === undefined || b === undefined || Math.abs(a + b - target) > 0.0001) return `Values must total ${term.validationTarget}.`;
-  }
-  if (term.validationRule === 'range') {
-    const bounds = term.validationTarget.split(',').map(numericValue);
-    const a = numericValue(valueA);
-    const b = numericValue(valueB);
-    if (bounds.length !== 2 || bounds[0] === undefined || bounds[1] === undefined || a === undefined || b === undefined || a < bounds[0] || a > bounds[1] || b < bounds[0] || b > bounds[1]) return `Values must be between ${term.validationTarget}.`;
-  }
-  return undefined;
-}
-
 type SnapshotTerm = {
   id: string;
   name: string;
@@ -133,12 +132,15 @@ function PositionEditor(props: {
   position: Position;
   initialValue: string;
   initialReason: string;
+  proposedValue?: string;
   editableValue: boolean;
   editableReason: boolean;
+  showSave: boolean;
   sideLabel: string;
   onSave: (value: string, reason: string) => Promise<void>;
 }) {
   const { position, editableValue, editableReason } = props;
+  const hasProposedValue = props.proposedValue !== undefined && props.proposedValue !== position.value;
   const [valueDraft, setValueDraft] = useState(position.value);
   const [reasonDraft, setReasonDraft] = useState(position.reason);
   const [dirty, setDirty] = useState(false);
@@ -179,6 +181,7 @@ function PositionEditor(props: {
           <strong>{position.value || '—'}</strong>
           <small>Updated {fmtElapsed(position.updatedAt.microsSinceUnixEpoch)}</small>
         </div>
+        {hasProposedValue && <div className="term-version proposed"><span>Proposed next</span><strong>{props.proposedValue || '—'}</strong></div>}
         {position.reason && <div className="pos-reason">{position.reason}</div>}
       </div>
     );
@@ -196,6 +199,7 @@ function PositionEditor(props: {
         <span>Latest · live</span>
         <small>Updated {fmtElapsed(position.updatedAt.microsSinceUnixEpoch)}</small>
       </div>
+      {hasProposedValue && <div className="term-version proposed"><span>Proposed next</span><strong>{props.proposedValue || '—'}</strong></div>}
       <div className="field-row">
         <input
           value={valueDraft}
@@ -212,12 +216,32 @@ function PositionEditor(props: {
         readOnly={!editableReason}
       />
       <small className="live-update">Updated {fmtElapsed(position.updatedAt.microsSinceUnixEpoch)}</small>
-      <button type="button" className="btn micro" disabled={saving || (!valueDraft.trim() && !reasonDraft.trim())} onClick={() => void save()}>
-        {saving ? 'Saving…' : 'Save initial position'}
-      </button>
+      {props.showSave && (
+        <button type="button" className="btn micro" disabled={saving || (!valueDraft.trim() && !reasonDraft.trim())} onClick={() => void save()}>
+          {saving ? 'Saving…' : 'Save initial position'}
+        </button>
+      )}
       {saveError && <p className="error">{saveError}</p>}
     </div>
   );
+}
+
+function SupportFilePreview({ document }: { document: SupportDocument }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const isImage = document.mimeType.startsWith('image/');
+  const isPdf = document.mimeType === 'application/pdf' || document.name.toLowerCase().endsWith('.pdf');
+
+  useEffect(() => {
+    if (!document.data.length || (!isImage && !isPdf)) return;
+    const objectUrl = URL.createObjectURL(new Blob([document.data], { type: document.mimeType }));
+    setUrl(objectUrl);
+    return () => URL.revokeObjectURL(objectUrl);
+  }, [document.data, document.mimeType, isImage, isPdf]);
+
+  if (isImage && url) return <img className="support-preview-image" src={url} alt={document.name} />;
+  if (isPdf && url) return <iframe className="support-preview-pdf" src={url} title={document.name} />;
+  if (document.content) return <pre>{document.content}</pre>;
+  return <p className="muted">Preview unavailable for this file.</p>;
 }
 
 function OfferComposer(props: {
@@ -323,7 +347,6 @@ export default function RoomPage() {
   const setPositionReducer = useReducer(reducers.setPosition);
   const setReasonReducer = useReducer(reducers.setReason);
   const makeOffer = useReducer(reducers.makeOffer);
-  const counterOffer = useReducer(reducers.counterOffer);
   const acceptOffer = useReducer(reducers.acceptOffer);
   const rejectOffer = useReducer(reducers.rejectOffer);
   const submitProposal = useReducer(reducers.submitAgentProposal);
@@ -332,6 +355,7 @@ export default function RoomPage() {
   const acceptCurrentTerms = useReducer(reducers.acceptCurrentTerms);
   const setPartyLabelReducer = useReducer(reducers.setPartyLabel);
   const confirmTermDefinitions = useReducer(reducers.confirmTermDefinitions);
+  const setPartyContext = useReducer(reducers.setPartyContext);
   const sendMessage = useReducer(reducers.sendMediatorMessage);
   const addSupportDocument = useReducer(reducers.addSupportDocument);
   const setClauseResolution = useReducer(reducers.setClauseResolution);
@@ -339,7 +363,7 @@ export default function RoomPage() {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [mediating, setMediating] = useState(false);
-  const [composer, setComposer] = useState<{ mode: 'offer' | 'counter'; offerId?: bigint } | null>(null);
+  const [composer, setComposer] = useState<{ mode: 'offer' } | null>(null);
   const [copied, setCopied] = useState(false);
   const [message, setMessage] = useState('');
   const [supportContent, setSupportContent] = useState('');
@@ -347,6 +371,8 @@ export default function RoomPage() {
   const [supportData, setSupportData] = useState<Uint8Array>(new Uint8Array());
   const [supportUploads, setSupportUploads] = useState<Array<{ name: string; mimeType: string; content: string; data: Uint8Array }>>([]);
   const [partyLabelDraft, setPartyLabelDraft] = useState('');
+  const [responderContextDraft, setResponderContextDraft] = useState('');
+  const [perspective, setPerspective] = useState<'neutral' | 'initiator' | 'responder'>('neutral');
 
   const neg = useMemo(
     () => [...negotiations].find(n => n.joinCode.toUpperCase() === code.toUpperCase()),
@@ -410,6 +436,10 @@ export default function RoomPage() {
     if (myParty) setPartyLabelDraft(myParty.label);
   }, [myParty]);
 
+  useEffect(() => {
+    setResponderContextDraft(neg?.responderContext ?? '');
+  }, [neg?.responderContext]);
+
   const partyLabel = useCallback(
     (p: Party | undefined) => p
       ? p.label === 'Party A' || p.side === 'a' && !p.label ? 'Initiating party' : p.label === 'Party B' || p.side === 'b' && !p.label ? 'Responding party' : p.label
@@ -448,9 +478,6 @@ export default function RoomPage() {
     m => m.posA?.value && m.posB?.value && m.posA.value.trim() === m.posB.value.trim()
   ).length;
   const gapPct = termsModel.length ? (gapAgreed / termsModel.length) * 100 : 0;
-  const validationIssues = termsModel
-    .map(item => termValidationMessage(item.term, item.posA?.value ?? '', item.posB?.value ?? ''))
-    .filter((issue): issue is string => issue !== undefined);
 
   const mySide = myParty?.side;
 
@@ -493,6 +520,9 @@ export default function RoomPage() {
     category: string;
     status: string;
     initialContext: string;
+    responderContext: string;
+    perspective: string;
+    requestingSide: 'a' | 'b' | null;
     jurisdictionState: string;
     jurisdictionCity: string;
     propertyType: 'residential' | 'commercial';
@@ -500,8 +530,8 @@ export default function RoomPage() {
     terms: SnapshotTerm[];
     offers: SnapshotOffer[];
       events: Array<{ type: string; payload: string }>;
-      messages: Array<{ authorSide: string; body: string }>;
-      supportDocuments: Array<{ name: string; mimeType: string; content: string }>;
+      messages: Array<{ authorSide: string; speaker: string; perspective: string; body: string }>;
+      supportDocuments: Array<{ name: string; mimeType: string; content: string; imageDataUrl?: string }>;
       clauses: Array<{ id: string; title: string; positionA: string; positionB: string; resolution: string; status: string }>;
   } => {
     const terms: SnapshotTerm[] = termsModel.map(m => ({
@@ -533,6 +563,9 @@ export default function RoomPage() {
       category: neg?.category ?? '',
       status: neg?.status ?? '',
       initialContext: neg?.initialContext ?? '',
+      responderContext: neg?.responderContext ?? '',
+      perspective,
+      requestingSide: mySide === 'a' || mySide === 'b' ? mySide : null,
       jurisdictionState: neg?.jurisdictionState ?? '',
       jurisdictionCity: neg?.jurisdictionCity ?? '',
       propertyType: neg?.propertyType === 'commercial' ? 'commercial' : 'residential',
@@ -542,12 +575,19 @@ export default function RoomPage() {
       events: negEvents.map(e => ({ type: e.type, payload: e.payload })),
       messages: [
         ...negMessages.map(m => ({
-        authorSide: partyA?.id === m.authorPartyId ? 'a' : 'b',
+        authorSide: partyA?.id === m.authorPartyId ? 'a' : partyB?.id === m.authorPartyId ? 'b' : 'system',
+        speaker: m.speaker,
+        perspective: m.perspective,
         body: m.body,
         })),
-        ...(extraMessage ? [{ authorSide: mySide ?? 'unknown', body: extraMessage }] : []),
+        ...(extraMessage ? [{ authorSide: mySide ?? 'unknown', speaker: mySide === 'a' ? 'initiator' : 'responder', perspective: 'party', body: extraMessage }] : []),
       ],
-      supportDocuments: supportDocuments.map(d => ({ name: d.name, mimeType: d.mimeType, content: d.content })),
+      supportDocuments: supportDocuments.map(d => ({
+        name: d.name,
+        mimeType: d.mimeType,
+        content: d.content,
+        ...(d.mimeType.startsWith('image/') && d.data.length > 0 ? { imageDataUrl: bytesToDataUrl(d.data, d.mimeType) } : {}),
+      })),
       clauses: clauses.map(clause => ({
         id: String(clause.id),
         title: clause.title,
@@ -577,6 +617,7 @@ export default function RoomPage() {
         reasoning: string;
         concerns: string[];
         requiredChanges: string[];
+        perspective?: string;
         citations: Array<{ id: string; title: string; url: string; sourceType: string; excerpt: string; relevance: string }>;
         clauses?: Array<{ clauseId: string; resolution: string }>;
         proposal: { terms: Array<{ termId: string; valueA: string; valueB: string }> };
@@ -591,6 +632,8 @@ export default function RoomPage() {
         concerns: data.concerns.join('\n'),
         requiredChanges: data.requiredChanges.join('\n'),
         citationsJson: JSON.stringify(data.citations),
+        perspective: data.perspective ?? perspective,
+        requestedByPartyId: myParty?.id ?? 0n,
       });
       for (const clause of data.clauses ?? []) {
         try {
@@ -643,6 +686,19 @@ export default function RoomPage() {
       setSupportUploads([]);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not add context');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const onSaveResponderContext = async () => {
+    if (!neg || myParty?.side !== 'b') return;
+    setBusy('Saving context…');
+    setError(null);
+    try {
+      await setPartyContext({ negotiationId: neg.id, context: responderContextDraft });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not save context');
     } finally {
       setBusy(null);
     }
@@ -748,20 +804,43 @@ export default function RoomPage() {
         </section>
       )}
 
+      <section className="panel stack context-panel">
+        <div className="row" style={{ justifyContent: 'space-between' }}>
+          <div>
+            <h2 style={{ fontFamily: 'var(--font-display)', fontSize: '1.2rem' }}>Shared rental context</h2>
+            <p className="muted">Both parties and the mediator see this context. It informs research but does not decide the outcome by itself.</p>
+          </div>
+          <span className="tag">Shared</span>
+        </div>
+        <div className="context-card">
+          <strong>Initiating party context</strong>
+          <p>{neg.initialContext || 'No context added yet.'}</p>
+        </div>
+        <div className="context-card">
+          <strong>Responding party context</strong>
+          <p>{neg.responderContext || 'The responding party has not added context yet.'}</p>
+        </div>
+        {!agreed && myParty?.side === 'b' && (
+          <>
+            <textarea rows={5} value={responderContextDraft} onChange={e => setResponderContextDraft(e.target.value)} placeholder="Add your experience, constraints, and what you want resolved…" maxLength={100000} />
+            <button type="button" className="btn ghost" disabled={busy !== null} onClick={() => void onSaveResponderContext()}>Save my context</button>
+          </>
+        )}
+      </section>
+
       {!agreed && (
         <section className="panel stack definition-review">
           <div className="row" style={{ justifyContent: 'space-between' }}>
             <div>
-              <h2 style={{ fontFamily: 'var(--font-display)', fontSize: '1.2rem' }}>Term definition</h2>
-              <p className="muted">The initiating party sets the format and final validation rule. Review it before accepting final terms.</p>
+              <h2 style={{ fontFamily: 'var(--font-display)', fontSize: '1.2rem' }}>Review suggested terms</h2>
+              <p className="muted">These rental terms came from the shared context. Review them before accepting a proposal.</p>
             </div>
             <span className={`tag ${neg.definitionsConfirmedByB ? 'aligned' : 'pending'}`}>{neg.definitionsConfirmedByB ? 'Reviewed' : 'Review needed'}</span>
           </div>
           {negTerms.map(term => (
             <div className="definition-row" key={String(term.id)}>
               <strong>{term.name}</strong>
-              <span>{term.valueKind.replace('_', ' ')}{term.unit ? ` · ${term.unit}` : ''}</span>
-              <span>{term.validationRule === 'none' ? 'No final rule' : `${term.validationRule.replace('_', ' ')}${term.validationTarget ? ` · ${term.validationTarget}` : ''}`}</span>
+              <span>Initiator: {termsModel.find(item => item.term.id === term.id)?.posA?.value || 'Not provided'}</span>
               {term.mediatorPreference && <span>Preference: {term.mediatorPreference}</span>}
             </div>
           ))}
@@ -812,7 +891,6 @@ export default function RoomPage() {
                     <h3>{term.name}</h3>
                     {!agreed && <span className={`tag ${agree ? 'aligned' : 'gap'}`}>{agree ? 'Aligned' : 'Disagrees'}</span>}
                   </div>
-                  <p className="term-rule">{term.valueKind.replace('_', ' ')}{term.unit ? ` · ${term.unit}` : ''} · {term.validationRule === 'none' ? 'free validation' : `${term.validationRule.replace('_', ' ')}${term.validationTarget ? ` ${term.validationTarget}` : ''}`}</p>
                   <div className="sides">
                     <PositionEditor
                       position={
@@ -830,8 +908,10 @@ export default function RoomPage() {
                       }
                       initialValue={posA?.initialValue || posA?.value || ''}
                       initialReason={posA?.initialReason || posA?.reason || ''}
+                      proposedValue={proposedLatestTerms.find(item => item.termId === String(term.id))?.valueA}
                       editableValue={!agreed && myParty !== undefined && mineA && posA !== undefined && !posA.initialValue && !posA.value}
                       editableReason={!agreed && myParty !== undefined && mineA && posA !== undefined && !posA.initialReason && !posA.reason}
+                      showSave={myParty?.side === 'b'}
                       sideLabel={partyLabel(partyA)}
                       onSave={async (value, reason) => {
                         if (posA && !posA.initialValue && !posA.value && value.trim()) await setPositionReducer({ positionId: posA.id, value });
@@ -854,8 +934,10 @@ export default function RoomPage() {
                       }
                       initialValue={posB?.initialValue || posB?.value || ''}
                       initialReason={posB?.initialReason || posB?.reason || ''}
+                      proposedValue={proposedLatestTerms.find(item => item.termId === String(term.id))?.valueB}
                       editableValue={!agreed && myParty !== undefined && mineB && posB !== undefined && !posB.initialValue && !posB.value}
                       editableReason={!agreed && myParty !== undefined && mineB && posB !== undefined && !posB.initialReason && !posB.reason}
+                      showSave={myParty?.side === 'b'}
                       sideLabel={partyLabel(partyB)}
                       onSave={async (value, reason) => {
                         if (posB && !posB.initialValue && !posB.value && value.trim()) await setPositionReducer({ positionId: posB.id, value });
@@ -912,7 +994,7 @@ export default function RoomPage() {
               <button
                 type="button"
                 className="btn ok"
-                 disabled={busy !== null || validationIssues.length > 0 || (myParty.side === 'a' ? neg.acceptedByA : neg.acceptedByB)}
+                 disabled={busy !== null || (myParty.side === 'a' ? neg.acceptedByA : neg.acceptedByB)}
                 onClick={async () => {
                   setBusy('Recording acceptance…');
                   try { await acceptCurrentTerms({ negotiationId: neg.id }); }
@@ -926,9 +1008,6 @@ export default function RoomPage() {
             <Link href={`/room/${code}/agreement`} className="btn ghost">Open working agreement</Link>
           </div>
           <p className="muted">Initiating party: {neg.acceptedByA ? 'accepted' : 'awaiting'} · Responding party: {neg.acceptedByB ? 'accepted' : 'awaiting'}. The matter is agreed only after both accept.</p>
-          {validationIssues.length > 0 && (
-            <p className="validation-warning">Final acceptance unavailable: {validationIssues[0]}</p>
-          )}
           {latestPendingOffer && myParty && (
             <div className="action-bar">
               <div className="offer-summary">
@@ -939,11 +1018,11 @@ export default function RoomPage() {
                   return <span key={String(item.id)}>{term?.name ?? 'Term'}: {item.valueA} / {item.valueB}</span>;
                 })}
               </div>
-              {myParty.id === latestPendingOffer.createdByPartyId ? (
-                <span className="muted">Your latest offer is awaiting the other party.</span>
+              {(myParty.side === 'a' ? latestPendingOffer.acceptedByA : latestPendingOffer.acceptedByB) ? (
+                <span className="muted">You accepted this proposal. Waiting for the other party.</span>
               ) : (
                 <>
-                  <strong>Respond to the latest offer</strong>
+                  <strong>Review and accept this proposal</strong>
                   <div className="row">
                     <button type="button" className="btn ok" disabled={busy !== null} onClick={async () => {
                       setBusy('Accepting…');
@@ -957,7 +1036,6 @@ export default function RoomPage() {
                       catch (err) { setError(err instanceof Error ? err.message : 'Reject failed'); }
                       finally { setBusy(null); }
                     }}>Reject</button>
-                    <button type="button" className="btn ghost" disabled={busy !== null} onClick={() => setComposer({ mode: 'counter', offerId: latestPendingOffer.id })}>Counter</button>
                   </div>
                 </>
               )}
@@ -977,26 +1055,6 @@ export default function RoomPage() {
               onCancel={() => setComposer(null)}
             />
           )}
-          {composer?.mode === 'counter' && (
-            <OfferComposer
-              terms={negTerms}
-              initial={(() => {
-                const map: Record<string, TermValues> = {};
-                for (const ot of negOfferTerms.filter(ot => ot.offerId === composer.offerId)) {
-                  map[String(ot.termId)] = { valueA: ot.valueA, valueB: ot.valueB };
-                }
-                return map;
-              })()}
-              initialNote={negOffers.find(o => o.id === composer.offerId)?.note ?? ''}
-              editableSide={myParty?.side === 'b' ? 'b' : 'a'}
-              submitLabel="Counter-offer — adjust and send"
-              onSubmit={async (note, items) => {
-                await counterOffer({ negotiationId: neg.id, note, terms: items });
-                setComposer(null);
-              }}
-              onCancel={() => setComposer(null)}
-            />
-          )}
         </section>
       )}
 
@@ -1006,24 +1064,29 @@ export default function RoomPage() {
         {supportDocuments.map(document => (
           <details className="support-document" key={String(document.id)}>
             <summary>{document.name} <span className="muted">({document.mimeType})</span></summary>
-            {document.content ? <pre>{document.content}</pre> : <p className="muted">Binary file attached for review.</p>}
+            <SupportFilePreview document={document} />
           </details>
         ))}
         {!agreed && <form className="stack" onSubmit={onAddSupportDocument}>
-          <input
-            type="file"
-            multiple
-            accept="*/*"
-            onChange={async e => {
-              const input = e.currentTarget;
-              const files = Array.from(e.target.files ?? []);
-              const uploads = await Promise.all(files.map(async file => {
-                const bytes = new Uint8Array(await file.arrayBuffer());
-                const readable = file.type.startsWith('text/') || /\.(txt|md|csv|json)$/i.test(file.name);
-                return { name: file.name, mimeType: file.type || 'application/octet-stream', content: readable ? await file.text() : '', data: bytes };
-              }));
-              setSupportUploads(previous => [...previous, ...uploads]);
-              input.value = '';
+            <input
+              type="file"
+              multiple
+              accept=".pdf,.docx,.txt,.md,.png,.jpg,.jpeg,.webp,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,image/*"
+              onChange={async e => {
+                const input = e.currentTarget;
+                const files = Array.from(e.target.files ?? []);
+                if (supportDocuments.length + supportUploads.length + files.length > MAX_SUPPORTING_FILES) {
+                  setError(`A matter can contain up to ${MAX_SUPPORTING_FILES} supporting files.`);
+                  input.value = '';
+                  return;
+                }
+                try {
+                  const uploads = await Promise.all(files.map(prepareRoomFile));
+                  setSupportUploads(previous => [...previous, ...uploads]);
+                } catch (err) {
+                  setError(err instanceof Error ? err.message : 'Could not read file');
+                }
+                input.value = '';
             }}
           />
           {supportUploads.length > 0 && (
@@ -1073,7 +1136,7 @@ export default function RoomPage() {
         {pendingProposal && (
           <div className="proposal-card stack chat-bubble mediator-bubble">
             <div className="row" style={{ justifyContent: 'space-between' }}>
-              <strong>Mediator recommendation</strong>
+              <strong>System mediator{pendingProposal.perspective !== 'neutral' ? ` · ${pendingProposal.perspective} perspective` : ''}</strong>
               <span className={`tag ${pendingProposal.decision}`}>{pendingProposal.decision.replace('_', ' ')}</span>
             </div>
             <p className="diagnosis">{pendingProposal.diagnosis}</p>
@@ -1120,7 +1183,7 @@ export default function RoomPage() {
                 <button
                   type="button"
                   className="btn ok"
-                  disabled={busy !== null || (myParty?.side === 'a' ? pendingProposal.acceptedByA : pendingProposal.acceptedByB)}
+                  disabled={busy !== null || (pendingProposal.requestedByPartyId !== 0n && pendingProposal.requestedByPartyId !== myParty?.id && !pendingProposal.acceptedByA && !pendingProposal.acceptedByB) || (myParty?.side === 'a' ? pendingProposal.acceptedByA : pendingProposal.acceptedByB)}
                   onClick={async () => {
                     setBusy('Accepting…');
                     try {
@@ -1132,7 +1195,9 @@ export default function RoomPage() {
                     }
                   }}
                   >
-                  {myParty?.side === 'a' && pendingProposal.acceptedByA
+                  {pendingProposal.requestedByPartyId !== 0n && pendingProposal.requestedByPartyId !== myParty?.id && !pendingProposal.acceptedByA && !pendingProposal.acceptedByB
+                    ? 'Waiting for requester review'
+                    : myParty?.side === 'a' && pendingProposal.acceptedByA
                     ? 'Accepted by you'
                     : myParty?.side === 'b' && pendingProposal.acceptedByB
                       ? 'Accepted by you'
@@ -1179,7 +1244,30 @@ export default function RoomPage() {
             Both parties accepted the mediator’s proposal. The latest terms were updated; each party must now accept those final terms to close the matter.
           </p>
         )}
+        {negProposals.length > 1 && (
+          <details className="proposal-history">
+            <summary>Conversation history ({negProposals.length} mediator responses)</summary>
+            {negProposals.slice(0, -1).map(proposal => (
+              <article className="history-proposal" key={String(proposal.id)}>
+                <div className="row" style={{ justifyContent: 'space-between' }}>
+                  <strong>System mediator · {proposal.perspective} perspective</strong>
+                  <span className={`tag ${proposal.decision}`}>{proposal.decision.replace('_', ' ')}</span>
+                </div>
+                <p>{proposal.diagnosis}</p>
+                {proposal.concerns && <small>{proposal.concerns}</small>}
+              </article>
+            ))}
+          </details>
+        )}
         {!agreed && <form className="stack mediator-chat" onSubmit={onSendMessage}>
+          <label>
+            Perspective
+            <select value={perspective} onChange={e => setPerspective(e.target.value as 'neutral' | 'initiator' | 'responder')}>
+              <option value="neutral">Neutral mediator</option>
+              <option value="initiator">From the initiating party's perspective</option>
+              <option value="responder">From the responding party's perspective</option>
+            </select>
+          </label>
           <label>
             Message the mediator
             <textarea
@@ -1196,8 +1284,8 @@ export default function RoomPage() {
           {negMessages.length > 0 && (
             <div className="message-list">
               {negMessages.map(item => (
-                <div className="message chat-bubble party-bubble" key={String(item.id)}>
-                  <strong>{partyLabelById.get(String(item.authorPartyId)) ?? 'Party'}</strong>
+                <div className={`message chat-bubble ${item.speaker === 'system' ? 'mediator-bubble' : 'party-bubble'}`} key={String(item.id)}>
+                  <strong>{item.speaker === 'system' ? `System mediator${item.perspective !== 'neutral' ? ` · ${item.perspective} perspective` : ''}` : partyLabelById.get(String(item.authorPartyId)) ?? 'Party'}</strong>
                   <span>{item.body}</span>
                 </div>
               ))}

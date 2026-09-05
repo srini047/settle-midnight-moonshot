@@ -11,7 +11,7 @@ function initialDraft(title: string, category: string) {
   return [
     title,
     '',
-    `Topic type: ${category}`,
+    `Rental matter: ${category}`,
     '',
     'Agreed terms',
     '[Terms will appear here as the parties negotiate.]',
@@ -183,15 +183,24 @@ export default function AgreementPage() {
             </div>
             {clausesRows.map(clause => {
               const conflict = clause.status === 'conflict';
+              const validResolution = clause.status === 'resolved' && clause.resolution.trim().length >= 3;
               return (
                 <article className={`clause-card ${conflict ? 'conflict' : 'resolved'}`} key={String(clause.id)}>
                   <div className="row" style={{ justifyContent: 'space-between' }}>
                     <h3>{clause.title}</h3>
                     <span className={`tag ${conflict ? 'gap' : 'aligned'}`}>{conflict ? 'Different' : clause.status}</span>
                   </div>
-                  <div className="clause-columns">
+                  {validResolution && (
+                    <div className="clause-current">
+                      <strong>Current agreed clause</strong>
+                      <p>{clause.resolution}</p>
+                    </div>
+                  )}
+                  <details className="clause-originals" open={!validResolution}>
+                    <summary>{validResolution ? 'View original party positions' : 'Party positions'}</summary>
+                    <div className="clause-columns">
                     <label>
-                      Initiating party
+                      {validResolution ? 'Original initiating position' : 'Initiating party'}
                       <textarea
                         rows={4}
                         readOnly={locked || mySide !== 'a'}
@@ -201,7 +210,7 @@ export default function AgreementPage() {
                       />
                     </label>
                     <label>
-                      Responding party
+                      {validResolution ? 'Original responding position' : 'Responding party'}
                       <textarea
                         rows={4}
                         readOnly={locked || mySide !== 'b'}
@@ -210,23 +219,77 @@ export default function AgreementPage() {
                         onBlur={() => void saveClausePosition(clause.id, 'b')}
                       />
                     </label>
-                  </div>
+                    </div>
+                  </details>
                   {clause.status === 'proposed' && (
                     <div className="clause-resolution">
                       <strong>Mediator resolution</strong>
                       <p>{clause.resolution}</p>
+                      <p className="muted">
+                        Initiating party: {clause.acceptedByA ? 'accepted' : 'awaiting'} · Responding party: {clause.acceptedByB ? 'accepted' : 'awaiting'}
+                      </p>
                       {!locked && mySide && (
-                        <button type="button" className="btn ok micro" onClick={async () => {
-                          try { await acceptClauseResolution({ clauseId: clause.id }); }
-                          catch (err) { setError(err instanceof Error ? err.message : 'Could not accept clause'); }
-                        }}>Accept this clause</button>
+                        <div className="row">
+                          <button
+                            type="button"
+                            className="btn ok micro"
+                            disabled={mySide === 'a' ? clause.acceptedByA : clause.acceptedByB}
+                            onClick={async () => {
+                              try { await acceptClauseResolution({ clauseId: clause.id }); }
+                              catch (err) { setError(err instanceof Error ? err.message : 'Could not accept clause'); }
+                            }}
+                          >
+                            {(mySide === 'a' ? clause.acceptedByA : clause.acceptedByB) ? 'Accepted by you' : 'Accept this clause'}
+                          </button>
+                        </div>
                       )}
+                      {!locked && mySide && (
+                        <div className="clause-resolution-input">
+                          <label>
+                            Suggest better wording
+                            <textarea
+                              rows={3}
+                              value={clauseDrafts[`${clause.id}:resolution`] ?? ''}
+                              onChange={e => setClauseDrafts(previous => ({ ...previous, [`${clause.id}:resolution`]: e.target.value }))}
+                              placeholder="Replace the proposed resolution with wording you can accept."
+                            />
+                          </label>
+                          <button
+                            type="button"
+                            className="btn ghost micro"
+                            disabled={!clauseDrafts[`${clause.id}:resolution`]?.trim()}
+                            onClick={async () => {
+                              try { await setClauseResolution({ clauseId: clause.id, resolution: clauseDrafts[`${clause.id}:resolution`] ?? '' }); }
+                              catch (err) { setError(err instanceof Error ? err.message : 'Could not replace clause resolution'); }
+                            }}
+                          >
+                            Propose replacement
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {clause.status === 'resolved' && !validResolution && !locked && mySide && (
+                    <div className="clause-resolution-input">
+                      <label>
+                        Replace clause wording
+                        <textarea
+                          rows={3}
+                          value={clauseDrafts[`${clause.id}:resolution`] ?? ''}
+                          onChange={e => setClauseDrafts(previous => ({ ...previous, [`${clause.id}:resolution`]: e.target.value }))}
+                          placeholder="Enter the complete clause wording."
+                        />
+                      </label>
+                      <button type="button" className="btn ghost micro" disabled={!clauseDrafts[`${clause.id}:resolution`]?.trim()} onClick={async () => {
+                        try { await setClauseResolution({ clauseId: clause.id, resolution: clauseDrafts[`${clause.id}:resolution`] ?? '' }); }
+                        catch (err) { setError(err instanceof Error ? err.message : 'Could not replace clause wording'); }
+                      }}>Propose replacement</button>
                     </div>
                   )}
                   {conflict && !locked && mySide && (
                     <div className="clause-resolution-input">
                       <label>
-                        Propose a resolution
+                        Propose the Clause
                         <textarea
                           rows={3}
                           placeholder="Write a compromise clause or wait for the mediator."
@@ -275,7 +338,7 @@ export default function AgreementPage() {
         {locked && <p className="provider-status">Negotiated terms and resolved clauses are locked. This page is now read-only.</p>}
         <div className="row">
           <button type="button" className="btn ghost" onClick={downloadPdf}>Download PDF</button>
-          <button type="button" className="btn ghost" disabled title="Configure Documenso credentials to enable email signing">Send for signature</button>
+          {/* <button type="button" className="btn ghost" disabled title="Configure Documenso credentials to enable email signing">Send for signature</button> */}
         </div>
         {error && <p className="error">{error}</p>}
       </section>
