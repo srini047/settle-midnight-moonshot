@@ -6,8 +6,10 @@
 import { type Infer as __Infer } from "spacetimedb";
 
 // Import all reducer arg schemas
+import AcceptCurrentTermsReducer from "../accept_current_terms_reducer";
 import AcceptOfferReducer from "../accept_offer_reducer";
 import AcceptProposalReducer from "../accept_proposal_reducer";
+import AddSupportDocumentReducer from "../add_support_document_reducer";
 import CounterOfferReducer from "../counter_offer_reducer";
 import CreateNegotiationReducer from "../create_negotiation_reducer";
 import FinalizeDealReducer from "../finalize_deal_reducer";
@@ -15,13 +17,19 @@ import JoinNegotiationReducer from "../join_negotiation_reducer";
 import MakeOfferReducer from "../make_offer_reducer";
 import RejectOfferReducer from "../reject_offer_reducer";
 import RejectProposalReducer from "../reject_proposal_reducer";
+import SendMediatorMessageReducer from "../send_mediator_message_reducer";
+import SetPartyLabelReducer from "../set_party_label_reducer";
 import SetPositionReducer from "../set_position_reducer";
 import SetPresenceReducer from "../set_presence_reducer";
 import SetReasonReducer from "../set_reason_reducer";
 import SubmitAgentProposalReducer from "../submit_agent_proposal_reducer";
+import UpdateAgreementClausesReducer from "../update_agreement_clauses_reducer";
+import UpdateAgreementDocumentReducer from "../update_agreement_document_reducer";
 
+export type AcceptCurrentTermsParams = __Infer<typeof AcceptCurrentTermsReducer>;
 export type AcceptOfferParams = __Infer<typeof AcceptOfferReducer>;
 export type AcceptProposalParams = __Infer<typeof AcceptProposalReducer>;
+export type AddSupportDocumentParams = __Infer<typeof AddSupportDocumentReducer>;
 export type CounterOfferParams = __Infer<typeof CounterOfferReducer>;
 export type CreateNegotiationParams = __Infer<typeof CreateNegotiationReducer>;
 export type FinalizeDealParams = __Infer<typeof FinalizeDealReducer>;
@@ -29,8 +37,12 @@ export type JoinNegotiationParams = __Infer<typeof JoinNegotiationReducer>;
 export type MakeOfferParams = __Infer<typeof MakeOfferReducer>;
 export type RejectOfferParams = __Infer<typeof RejectOfferReducer>;
 export type RejectProposalParams = __Infer<typeof RejectProposalReducer>;
+export type SendMediatorMessageParams = __Infer<typeof SendMediatorMessageReducer>;
+export type SetPartyLabelParams = __Infer<typeof SetPartyLabelReducer>;
 export type SetPositionParams = __Infer<typeof SetPositionReducer>;
 export type SetPresenceParams = __Infer<typeof SetPresenceReducer>;
 export type SetReasonParams = __Infer<typeof SetReasonReducer>;
 export type SubmitAgentProposalParams = __Infer<typeof SubmitAgentProposalReducer>;
+export type UpdateAgreementClausesParams = __Infer<typeof UpdateAgreementClausesReducer>;
+export type UpdateAgreementDocumentParams = __Infer<typeof UpdateAgreementDocumentReducer>;
 

@@ -18,4 +18,6 @@ export default __t.row({
   value: __t.string(),
   reason: __t.string(),
   updatedAt: __t.timestamp().name("updated_at"),
+  initialValue: __t.string().name("initial_value"),
+  initialReason: __t.string().name("initial_reason"),
 });

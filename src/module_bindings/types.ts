@@ -19,8 +19,20 @@ export const AgentProposal = __t.object("AgentProposal", {
   reasoning: __t.string(),
   status: __t.string(),
   createdAt: __t.timestamp(),
+  acceptedByA: __t.bool(),
+  acceptedByB: __t.bool(),
 });
 export type AgentProposal = __Infer<typeof AgentProposal>;
+
+export const AgreementDocument = __t.object("AgreementDocument", {
+  negotiationId: __t.u64(),
+  content: __t.string(),
+  updatedBy: __t.identity(),
+  updatedAt: __t.timestamp(),
+  lockedTerms: __t.string(),
+  clauses: __t.string(),
+});
+export type AgreementDocument = __Infer<typeof AgreementDocument>;
 
 export const Event = __t.object("Event", {
   id: __t.u64(),
@@ -32,6 +44,15 @@ export const Event = __t.object("Event", {
 });
 export type Event = __Infer<typeof Event>;
 
+export const MediatorMessage = __t.object("MediatorMessage", {
+  id: __t.u64(),
+  negotiationId: __t.u64(),
+  authorPartyId: __t.u64(),
+  body: __t.string(),
+  createdAt: __t.timestamp(),
+});
+export type MediatorMessage = __Infer<typeof MediatorMessage>;
+
 export const Negotiation = __t.object("Negotiation", {
   id: __t.u64(),
   joinCode: __t.string(),
@@ -40,6 +61,9 @@ export const Negotiation = __t.object("Negotiation", {
   status: __t.string(),
   createdAt: __t.timestamp(),
   createdBy: __t.identity(),
+  initialContext: __t.string(),
+  acceptedByA: __t.bool(),
+  acceptedByB: __t.bool(),
 });
 export type Negotiation = __Infer<typeof Negotiation>;
 
@@ -87,6 +111,8 @@ export const Position = __t.object("Position", {
   value: __t.string(),
   reason: __t.string(),
   updatedAt: __t.timestamp(),
+  initialValue: __t.string(),
+  initialReason: __t.string(),
 });
 export type Position = __Infer<typeof Position>;
 
@@ -97,6 +123,26 @@ export const Presence = __t.object("Presence", {
   online: __t.bool(),
 });
 export type Presence = __Infer<typeof Presence>;
+
+export const SupportDocument = __t.object("SupportDocument", {
+  id: __t.u64(),
+  negotiationId: __t.u64(),
+  name: __t.string(),
+  content: __t.string(),
+  uploadedBy: __t.identity(),
+  createdAt: __t.timestamp(),
+  mimeType: __t.string(),
+  data: __t.byteArray(),
+});
+export type SupportDocument = __Infer<typeof SupportDocument>;
+
+export const SupportDocumentSeed = __t.object("SupportDocumentSeed", {
+  name: __t.string(),
+  mimeType: __t.string(),
+  content: __t.string(),
+  data: __t.byteArray(),
+});
+export type SupportDocumentSeed = __Infer<typeof SupportDocumentSeed>;
 
 export const Term = __t.object("Term", {
   id: __t.u64(),

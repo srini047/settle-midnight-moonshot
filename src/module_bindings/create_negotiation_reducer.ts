@@ -12,6 +12,7 @@ import {
 
 import {
   TermSeed,
+  SupportDocumentSeed,
 } from "./types";
 
 export default {
@@ -21,5 +22,9 @@ export default {
   partyBLabel: __t.string(),
   get terms() {
     return __t.array(TermSeed);
+  },
+  supportingContext: __t.string(),
+  get supportDocuments() {
+    return __t.array(SupportDocumentSeed);
   },
 };

@@ -18,4 +18,7 @@ export default __t.row({
   status: __t.string(),
   createdAt: __t.timestamp().name("created_at"),
   createdBy: __t.identity().name("created_by"),
+  initialContext: __t.string().name("initial_context"),
+  acceptedByA: __t.bool().name("accepted_by_a"),
+  acceptedByB: __t.bool().name("accepted_by_b"),
 });

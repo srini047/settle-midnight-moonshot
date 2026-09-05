@@ -34,8 +34,10 @@ import {
 } from "spacetimedb";
 
 // Import all reducer arg schemas
+import AcceptCurrentTermsReducer from "./accept_current_terms_reducer";
 import AcceptOfferReducer from "./accept_offer_reducer";
 import AcceptProposalReducer from "./accept_proposal_reducer";
+import AddSupportDocumentReducer from "./add_support_document_reducer";
 import CounterOfferReducer from "./counter_offer_reducer";
 import CreateNegotiationReducer from "./create_negotiation_reducer";
 import FinalizeDealReducer from "./finalize_deal_reducer";
@@ -43,22 +45,29 @@ import JoinNegotiationReducer from "./join_negotiation_reducer";
 import MakeOfferReducer from "./make_offer_reducer";
 import RejectOfferReducer from "./reject_offer_reducer";
 import RejectProposalReducer from "./reject_proposal_reducer";
+import SendMediatorMessageReducer from "./send_mediator_message_reducer";
+import SetPartyLabelReducer from "./set_party_label_reducer";
 import SetPositionReducer from "./set_position_reducer";
 import SetPresenceReducer from "./set_presence_reducer";
 import SetReasonReducer from "./set_reason_reducer";
 import SubmitAgentProposalReducer from "./submit_agent_proposal_reducer";
+import UpdateAgreementClausesReducer from "./update_agreement_clauses_reducer";
+import UpdateAgreementDocumentReducer from "./update_agreement_document_reducer";
 
 // Import all procedure arg schemas
 
 // Import all table schema definitions
 import AgentProposalRow from "./agent_proposal_table";
+import AgreementDocumentRow from "./agreement_document_table";
 import EventRow from "./event_table";
+import MediatorMessageRow from "./mediator_message_table";
 import NegotiationRow from "./negotiation_table";
 import OfferRow from "./offer_table";
 import OfferTermRow from "./offer_term_table";
 import PartyRow from "./party_table";
 import PositionRow from "./position_table";
 import PresenceRow from "./presence_table";
+import SupportDocumentRow from "./support_document_table";
 import TermRow from "./term_table";
 
 /** Type-only namespace exports for generated type groups. */
@@ -79,6 +88,17 @@ const tablesSchema = __schema({
       { name: 'agent_proposal_id_key', constraint: 'unique', columns: ['id'] },
     ],
   }, AgentProposalRow),
+  agreementDocument: __table({
+    name: 'agreement_document',
+    indexes: [
+      { accessor: 'negotiationId', name: 'agreement_document_negotiation_id_idx_btree', algorithm: 'btree', columns: [
+        'negotiationId',
+      ] },
+    ],
+    constraints: [
+      { name: 'agreement_document_negotiation_id_key', constraint: 'unique', columns: ['negotiationId'] },
+    ],
+  }, AgreementDocumentRow),
   event: __table({
     name: 'event',
     indexes: [
@@ -93,6 +113,20 @@ const tablesSchema = __schema({
       { name: 'event_id_key', constraint: 'unique', columns: ['id'] },
     ],
   }, EventRow),
+  mediatorMessage: __table({
+    name: 'mediator_message',
+    indexes: [
+      { accessor: 'id', name: 'mediator_message_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+      { accessor: 'by_negotiation', name: 'mediator_message_negotiation_id_idx_btree', algorithm: 'btree', columns: [
+        'negotiationId',
+      ] },
+    ],
+    constraints: [
+      { name: 'mediator_message_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, MediatorMessageRow),
   negotiation: __table({
     name: 'negotiation',
     indexes: [
@@ -178,6 +212,20 @@ const tablesSchema = __schema({
       { name: 'presence_identity_key', constraint: 'unique', columns: ['identity'] },
     ],
   }, PresenceRow),
+  supportDocument: __table({
+    name: 'support_document',
+    indexes: [
+      { accessor: 'id', name: 'support_document_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+      { accessor: 'by_negotiation', name: 'support_document_negotiation_id_idx_btree', algorithm: 'btree', columns: [
+        'negotiationId',
+      ] },
+    ],
+    constraints: [
+      { name: 'support_document_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, SupportDocumentRow),
   term: __table({
     name: 'term',
     indexes: [
@@ -196,8 +244,10 @@ const tablesSchema = __schema({
 
 /** The schema information for all reducers in this module. This is defined the same way as the reducers would have been defined in the server, except the body of the reducer is omitted in code generation. */
 const reducersSchema = __reducers(
+  __reducerSchema("accept_current_terms", AcceptCurrentTermsReducer),
   __reducerSchema("accept_offer", AcceptOfferReducer),
   __reducerSchema("accept_proposal", AcceptProposalReducer),
+  __reducerSchema("add_support_document", AddSupportDocumentReducer),
   __reducerSchema("counter_offer", CounterOfferReducer),
   __reducerSchema("create_negotiation", CreateNegotiationReducer),
   __reducerSchema("finalize_deal", FinalizeDealReducer),
@@ -205,10 +255,14 @@ const reducersSchema = __reducers(
   __reducerSchema("make_offer", MakeOfferReducer),
   __reducerSchema("reject_offer", RejectOfferReducer),
   __reducerSchema("reject_proposal", RejectProposalReducer),
+  __reducerSchema("send_mediator_message", SendMediatorMessageReducer),
+  __reducerSchema("set_party_label", SetPartyLabelReducer),
   __reducerSchema("set_position", SetPositionReducer),
   __reducerSchema("set_presence", SetPresenceReducer),
   __reducerSchema("set_reason", SetReasonReducer),
   __reducerSchema("submit_agent_proposal", SubmitAgentProposalReducer),
+  __reducerSchema("update_agreement_clauses", UpdateAgreementClausesReducer),
+  __reducerSchema("update_agreement_document", UpdateAgreementDocumentReducer),
 );
 
 /** The schema information for all procedures in this module. This is defined the same way as the procedures would have been defined in the server. */
@@ -219,8 +273,14 @@ type __SchemaWithTableAccessorAliases = Omit<typeof tablesSchema.schemaType, "ta
   tables: typeof tablesSchema.schemaType.tables & {
     /** @deprecated Use `agentProposal` instead. This alias will be removed in the next major version. */
     readonly "agent_proposal": Omit<typeof tablesSchema.schemaType.tables["agentProposal"], "accessorName"> & { readonly accessorName: "agent_proposal" };
+    /** @deprecated Use `agreementDocument` instead. This alias will be removed in the next major version. */
+    readonly "agreement_document": Omit<typeof tablesSchema.schemaType.tables["agreementDocument"], "accessorName"> & { readonly accessorName: "agreement_document" };
+    /** @deprecated Use `mediatorMessage` instead. This alias will be removed in the next major version. */
+    readonly "mediator_message": Omit<typeof tablesSchema.schemaType.tables["mediatorMessage"], "accessorName"> & { readonly accessorName: "mediator_message" };
     /** @deprecated Use `offerTerm` instead. This alias will be removed in the next major version. */
     readonly "offer_term": Omit<typeof tablesSchema.schemaType.tables["offerTerm"], "accessorName"> & { readonly accessorName: "offer_term" };
+    /** @deprecated Use `supportDocument` instead. This alias will be removed in the next major version. */
+    readonly "support_document": Omit<typeof tablesSchema.schemaType.tables["supportDocument"], "accessorName"> & { readonly accessorName: "support_document" };
   };
 };
 
@@ -240,7 +300,10 @@ const REMOTE_MODULE = {
 
 const tableAccessorAliases = {
   "agent_proposal": "agentProposal",
+  "agreement_document": "agreementDocument",
+  "mediator_message": "mediatorMessage",
   "offer_term": "offerTerm",
+  "support_document": "supportDocument",
 } as const;
 
 function __withTableAccessorAliases<T extends object>(target: T, freeze = false): T {
@@ -263,16 +326,28 @@ type __DbViewBase = __DbConnectionImpl<typeof REMOTE_MODULE>["db"];
 export type DbView = __DbViewBase & {
   /** @deprecated Use `agentProposal` instead. This alias will be removed in the next major version. */
   readonly "agent_proposal": __DbViewBase["agentProposal"];
+  /** @deprecated Use `agreementDocument` instead. This alias will be removed in the next major version. */
+  readonly "agreement_document": __DbViewBase["agreementDocument"];
+  /** @deprecated Use `mediatorMessage` instead. This alias will be removed in the next major version. */
+  readonly "mediator_message": __DbViewBase["mediatorMessage"];
   /** @deprecated Use `offerTerm` instead. This alias will be removed in the next major version. */
   readonly "offer_term": __DbViewBase["offerTerm"];
+  /** @deprecated Use `supportDocument` instead. This alias will be removed in the next major version. */
+  readonly "support_document": __DbViewBase["supportDocument"];
 };
 
 type __TablesBase = __QueryBuilder<typeof tablesSchema.schemaType>;
 export type Tables = __TablesBase & {
   /** @deprecated Use `agentProposal` instead. This alias will be removed in the next major version. */
   readonly "agent_proposal": __TablesBase["agentProposal"];
+  /** @deprecated Use `agreementDocument` instead. This alias will be removed in the next major version. */
+  readonly "agreement_document": __TablesBase["agreementDocument"];
+  /** @deprecated Use `mediatorMessage` instead. This alias will be removed in the next major version. */
+  readonly "mediator_message": __TablesBase["mediatorMessage"];
   /** @deprecated Use `offerTerm` instead. This alias will be removed in the next major version. */
   readonly "offer_term": __TablesBase["offerTerm"];
+  /** @deprecated Use `supportDocument` instead. This alias will be removed in the next major version. */
+  readonly "support_document": __TablesBase["supportDocument"];
 };
 
 /** The tables available in this remote SpacetimeDB module. Each table reference doubles as a query builder. */

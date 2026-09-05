@@ -19,4 +19,6 @@ export default __t.row({
   reasoning: __t.string(),
   status: __t.string(),
   createdAt: __t.timestamp().name("created_at"),
+  acceptedByA: __t.bool().name("accepted_by_a"),
+  acceptedByB: __t.bool().name("accepted_by_b"),
 });

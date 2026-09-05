@@ -6,12 +6,12 @@ import { useSpacetimeDB, useTable, useReducer } from 'spacetimedb/react';
 import { tables, reducers } from '../src/module_bindings';
 
 const CATEGORIES = [
-  'Price',
-  'Rent',
-  'Deadline',
-  'Work split',
-  'Co-founder decision',
-  'Custom',
+  'Commercial terms',
+  'Lease or tenancy',
+  'Settlement deadline',
+  'Services or scope',
+  'Ownership or equity',
+  'Custom matter',
 ] as const;
 
 type TermDraft = {
@@ -22,9 +22,16 @@ type TermDraft = {
   reasonB: string;
 };
 
+type SupportingFile = {
+  name: string;
+  mimeType: string;
+  content: string;
+  data: Uint8Array;
+};
+
 const DEFAULT_TERMS: TermDraft[] = [
   {
-    name: 'Primary term',
+    name: 'Subject matter',
     valueA: '',
     valueB: '',
     reasonA: '',
@@ -40,14 +47,32 @@ export default function HomePage() {
   const joinNegotiation = useReducer(reducers.joinNegotiation);
 
   const [title, setTitle] = useState('');
-  const [category, setCategory] = useState<string>('Custom');
-  const [partyALabel, setPartyALabel] = useState('Party A');
-  const [partyBLabel, setPartyBLabel] = useState('Party B');
+  const [category, setCategory] = useState<string>('Commercial terms');
+  const [customMatter, setCustomMatter] = useState('');
+  const [partyALabel, setPartyALabel] = useState('Initiating party');
   const [terms, setTerms] = useState<TermDraft[]>(DEFAULT_TERMS);
+  const [supportingContext, setSupportingContext] = useState('');
+  const [supportingFiles, setSupportingFiles] = useState<SupportingFile[]>([]);
   const [joinCode, setJoinCode] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pendingCode, setPendingCode] = useState<string | null>(null);
+
+  const validate = () => {
+    if (title.trim().length < 3) return 'Give the matter a title of at least 3 characters.';
+    if (category === 'Custom matter' && customMatter.trim().length < 10) {
+      return 'Describe the custom matter in at least 10 characters.';
+    }
+    if (partyALabel.trim().length < 2) {
+      return 'The initiating party label is required.';
+    }
+    if (terms.length === 0) return 'Add at least one negotiation term.';
+    if (terms.some(term => term.name.trim().length < 2)) return 'Every term needs a name.';
+    if (terms.some(term => !term.valueA.trim() && !term.valueB.trim())) {
+      return 'Give each term at least one opening position.';
+    }
+    return null;
+  };
 
   useEffect(() => {
     if (!pendingCode) return;
@@ -55,7 +80,7 @@ export default function HomePage() {
       n => n.joinCode.toUpperCase() === pendingCode.toUpperCase()
     );
     if (found) {
-      router.push(`/n/${found.joinCode}`);
+      router.push(`/room/${found.joinCode}`);
     }
   }, [negotiations, pendingCode, router]);
 
@@ -66,6 +91,11 @@ export default function HomePage() {
   const onCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!isActive) return;
+    const validationError = validate();
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -74,8 +104,13 @@ export default function HomePage() {
         title,
         category,
         partyALabel,
-        partyBLabel,
-        terms: terms.map(t => ({
+          partyBLabel: '',
+          supportingContext: [
+            category === 'Custom matter' ? `Custom matter description:\n${customMatter.trim()}` : '',
+            supportingContext.trim(),
+          ].filter(Boolean).join('\n\n'),
+          supportDocuments: supportingFiles,
+          terms: terms.map(t => ({
           name: t.name,
           valueA: t.valueA,
           valueB: t.valueB,
@@ -108,7 +143,7 @@ export default function HomePage() {
     })[0];
     if (newest) {
       setBusy(false);
-      router.push(`/n/${newest.joinCode}`);
+      router.push(`/room/${newest.joinCode}`);
     }
   }, [negotiations, pendingCode, router]);
 
@@ -133,6 +168,12 @@ export default function HomePage() {
         <span className={`status-dot ${isActive ? 'on' : ''}`} />
         {isActive ? 'Live on maincloud' : 'Connecting…'}
       </p>
+      {!isActive && (
+        <p className="muted connection-help">
+          Settle is reconnecting to the shared table. You can prepare the matter now;
+          creation and joining will unlock when the connection is ready.
+        </p>
+      )}
       <h1 className="brand">Settle</h1>
       <p className="lede">
         Can&apos;t agree? Put it on one live negotiation table. Two parties. Shared terms.
@@ -143,9 +184,16 @@ export default function HomePage() {
         <h2 style={{ fontFamily: 'var(--font-display)', fontSize: '1.35rem' }}>
           Start a negotiation
         </h2>
-        <form className="stack" onSubmit={onCreate}>
+        <form className="stack landing-form" onSubmit={onCreate}>
+          <div className="form-section-heading">
+            <span>01</span>
+            <div>
+              <h3>Matter</h3>
+              <p>Give the mediator the basic shape of the dispute.</p>
+            </div>
+          </div>
           <label>
-            What are you negotiating?
+            Matter type
             <select value={category} onChange={e => setCategory(e.target.value)}>
               {CATEGORIES.map(c => (
                 <option key={c} value={c}>
@@ -153,7 +201,22 @@ export default function HomePage() {
                 </option>
               ))}
             </select>
+            <span className="field-help">This gives the mediator context and labels the room.</span>
           </label>
+          {category === 'Custom matter' && (
+            <label>
+              Describe the matter
+              <textarea
+                rows={4}
+                value={customMatter}
+                onChange={e => setCustomMatter(e.target.value)}
+                placeholder="Explain what the parties are trying to resolve."
+                maxLength={5000}
+                required
+              />
+              <span className="field-help">This description is shared with the mediator as background context.</span>
+            </label>
+          )}
           <label>
             Dispute title
             <input
@@ -163,23 +226,30 @@ export default function HomePage() {
               required
             />
           </label>
+          <div className="form-section-heading">
+            <span>02</span>
+            <div>
+              <h3>Parties</h3>
+              <p>Use the names or legal roles each side recognizes.</p>
+            </div>
+          </div>
           <div className="sides">
             <label>
-              Party A label
+              Initiating party label
               <input
                 value={partyALabel}
                 onChange={e => setPartyALabel(e.target.value)}
                 required
               />
             </label>
-            <label>
-              Party B label
-              <input
-                value={partyBLabel}
-                onChange={e => setPartyBLabel(e.target.value)}
-                required
-              />
-            </label>
+          </div>
+
+          <div className="form-section-heading">
+            <span>03</span>
+            <div>
+              <h3>Opening position</h3>
+              <p>These positions are preserved as the initial record.</p>
+            </div>
           </div>
 
           {terms.map((term, index) => (
@@ -194,54 +264,81 @@ export default function HomePage() {
               </label>
               <div className="sides">
                 <label>
-                  Party A position
+                  Initiating party position
                   <input
                     value={term.valueA}
                     onChange={e => updateTerm(index, { valueA: e.target.value })}
                     placeholder="e.g. 55%"
                   />
                 </label>
-                <label>
-                  Party B position
-                  <input
-                    value={term.valueB}
-                    onChange={e => updateTerm(index, { valueB: e.target.value })}
-                    placeholder="e.g. 45%"
-                  />
-                </label>
               </div>
               <div className="sides">
                 <label>
-                  Party A reason
-                  <input
+                  Initiating party reason
+                  <textarea
+                    rows={3}
                     value={term.reasonA}
                     onChange={e => updateTerm(index, { reasonA: e.target.value })}
-                  />
-                </label>
-                <label>
-                  Party B reason
-                  <input
-                    value={term.reasonB}
-                    onChange={e => updateTerm(index, { reasonB: e.target.value })}
                   />
                 </label>
               </div>
             </div>
           ))}
 
+          <div className="form-section-heading">
+            <span>04</span>
+            <div>
+              <h3>Context</h3>
+              <p>Optional background material for the mediator.</p>
+            </div>
+          </div>
+
+          <label>
+            <span className="label-with-help">
+              Supporting context (optional)
+              <button type="button" className="help-icon" title="Context gives the mediator background facts, clauses, or documents. It is shared with both parties and is not itself a negotiated term." aria-label="About supporting context">?</button>
+            </span>
+            <textarea
+              rows={4}
+              value={supportingContext}
+              onChange={e => setSupportingContext(e.target.value)}
+              placeholder="Paste a clause, background facts, or instructions the mediator should consider."
+              maxLength={100000}
+            />
+            <input
+              type="file"
+              multiple
+              accept="*/*"
+              onChange={async e => {
+                const input = e.currentTarget;
+                const files = Array.from(e.target.files ?? []);
+                const next = await Promise.all(files.map(async file => {
+                  const bytes = new Uint8Array(await file.arrayBuffer());
+                  const readable = file.type.startsWith('text/') || /\.(txt|md|csv|json)$/i.test(file.name);
+                  return {
+                    name: file.name,
+                    mimeType: file.type || 'application/octet-stream',
+                    content: readable ? await file.text() : '',
+                    data: bytes,
+                  };
+                }));
+                setSupportingFiles(previous => [...previous, ...next]);
+                input.value = '';
+              }}
+            />
+            {supportingFiles.length > 0 && (
+              <div className="file-list">
+                {supportingFiles.map((file, index) => (
+                  <div className="file-chip" key={`${file.name}-${index}`}>
+                    <span>{file.name}</span>
+                    <button type="button" onClick={() => setSupportingFiles(files => files.filter((_, i) => i !== index))}>Remove</button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </label>
+
           <div className="row">
-            <button
-              type="button"
-              className="btn ghost"
-              onClick={() =>
-                setTerms(prev => [
-                  ...prev,
-                  { name: '', valueA: '', valueB: '', reasonA: '', reasonB: '' },
-                ])
-              }
-            >
-              Add term
-            </button>
             <button type="submit" className="btn" disabled={!isActive || busy}>
               {busy ? 'Opening room…' : 'Create room'}
             </button>

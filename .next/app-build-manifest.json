@@ -6,35 +6,25 @@
       "static/css/app/layout.css",
       "static/chunks/app/layout.js"
     ],
+    "/not-found": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/not-found.js"
+    ],
     "/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
       "static/chunks/app/page.js"
     ],
-    "/n/[code]/page": [
+    "/room/[code]/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/n/[code]/page.js"
+      "static/chunks/app/room/[code]/page.js"
     ],
-    "/api/tts/route": [
+    "/room/[code]/agreement/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/api/tts/route.js"
-    ],
-    "/api/stt/route": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/api/stt/route.js"
-    ],
-    "/api/mediate/route": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/api/mediate/route.js"
-    ],
-    "/_not-found/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/_not-found/page.js"
+      "static/chunks/app/room/[code]/agreement/page.js"
     ]
   }
 }

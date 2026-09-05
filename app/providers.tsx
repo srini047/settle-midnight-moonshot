@@ -5,6 +5,7 @@ import { SpacetimeDBProvider } from 'spacetimedb/react';
 import { DbConnection, ErrorContext } from '../src/module_bindings';
 import { Identity } from 'spacetimedb';
 import { SPACETIMEDB_DB_NAME, SPACETIMEDB_URI } from '../lib/spacetimedb';
+import { ThemeToggle } from './theme-toggle';
 
 const TOKEN_KEY = `${SPACETIMEDB_URI}/${SPACETIMEDB_DB_NAME}/auth_token`;
 
@@ -45,6 +46,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
 
   return (
     <SpacetimeDBProvider connectionBuilder={connectionBuilder}>
+      <ThemeToggle />
       {children}
     </SpacetimeDBProvider>
   );
