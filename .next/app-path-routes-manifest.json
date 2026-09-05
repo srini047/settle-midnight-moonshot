@@ -1,0 +1,8 @@
+{
+  "/api/tts/route": "/api/tts",
+  "/api/stt/route": "/api/stt",
+  "/_not-found/page": "/_not-found",
+  "/api/mediate/route": "/api/mediate",
+  "/n/[code]/page": "/n/[code]",
+  "/page": "/"
+}

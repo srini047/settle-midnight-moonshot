@@ -1,0 +1,8 @@
+{
+  "/api/tts/route": "app/api/tts/route.js",
+  "/api/stt/route": "app/api/stt/route.js",
+  "/api/mediate/route": "app/api/mediate/route.js",
+  "/_not-found/page": "app/_not-found/page.js",
+  "/page": "app/page.js",
+  "/n/[code]/page": "app/n/[code]/page.js"
+}
