@@ -13,6 +13,11 @@ const TermSeed = t.object('TermSeed', {
   valueB: t.string(),
   reasonA: t.string(),
   reasonB: t.string(),
+  valueKind: t.string(),
+  unit: t.string(),
+  validationRule: t.string(),
+  validationTarget: t.string(),
+  mediatorPreference: t.string(),
 });
 
 const OfferTermInput = t.object('OfferTermInput', {
@@ -41,6 +46,11 @@ const negotiation = table(
     initialContext: t.string().default(''),
     acceptedByA: t.bool().default(false),
     acceptedByB: t.bool().default(false),
+    definitionsConfirmedByA: t.bool().default(false),
+    definitionsConfirmedByB: t.bool().default(false),
+    jurisdictionState: t.string().default(''),
+    jurisdictionCity: t.string().default(''),
+    propertyType: t.string().default('residential'),
   }
 );
 
@@ -59,6 +69,7 @@ const party = table(
     label: t.string(),
     identity: t.option(t.identity()),
     online: t.bool(),
+    labelConfirmed: t.bool().default(false),
   }
 );
 
@@ -75,6 +86,11 @@ const term = table(
     negotiationId: t.u64(),
     name: t.string(),
     sortOrder: t.u32(),
+    valueKind: t.string().default('free_text'),
+    unit: t.string().default(''),
+    validationRule: t.string().default('none'),
+    validationTarget: t.string().default(''),
+    mediatorPreference: t.string().default(''),
   }
 );
 
@@ -154,6 +170,10 @@ const agent_proposal = table(
     createdAt: t.timestamp(),
     acceptedByA: t.bool().default(false),
     acceptedByB: t.bool().default(false),
+    decision: t.string().default('proceed'),
+    concerns: t.string().default(''),
+    requiredChanges: t.string().default(''),
+    citationsJson: t.string().default('[]'),
   }
 );
 
@@ -181,6 +201,27 @@ const agreement_document = table(
     updatedAt: t.timestamp(),
     lockedTerms: t.string().default(''),
     clauses: t.string().default(''),
+  }
+);
+
+const agreement_clause = table(
+  {
+    name: 'agreement_clause',
+    public: true,
+    indexes: [{ accessor: 'by_negotiation', algorithm: 'btree', columns: ['negotiationId'] }],
+  },
+  {
+    id: t.u64().primaryKey().autoInc(),
+    negotiationId: t.u64(),
+    title: t.string(),
+    positionA: t.string(),
+    positionB: t.string(),
+    resolution: t.string(),
+    status: t.string(),
+    acceptedByA: t.bool(),
+    acceptedByB: t.bool(),
+    sortOrder: t.u32(),
+    updatedAt: t.timestamp(),
   }
 );
 
@@ -240,6 +281,7 @@ const spacetimedb = schema({
   agent_proposal,
   mediator_message,
   agreement_document,
+  agreement_clause,
   support_document,
   event,
   presence,
@@ -321,6 +363,13 @@ function currentLockedTerms(ctx: Ctx, negotiationId: bigint): string {
   ].join('\n');
 }
 
+function currentResolvedClauses(ctx: Ctx, negotiationId: bigint): string {
+  return [...ctx.db.agreement_clause.by_negotiation.filter(negotiationId)]
+    .sort((a, b) => a.sortOrder - b.sortOrder)
+    .map(clause => `${clause.title}: ${clause.resolution}`)
+    .join('\n');
+}
+
 function ensureAgreementDocument(ctx: Ctx, negotiationId: bigint) {
   if (!ctx.db.agreement_document.negotiationId.find(negotiationId)) {
     const negotiation = ctx.db.negotiation.id.find(negotiationId);
@@ -385,6 +434,83 @@ function clearProposalAcceptance(ctx: Ctx, negotiationId: bigint, side: string) 
   }
 }
 
+function numericValue(value: string): number | undefined {
+  const parsed = Number(value.replace(/[^0-9.-]/g, ''));
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function validateTermPair(term: {
+  name: string;
+  valueKind: string;
+  validationRule: string;
+  validationTarget: string;
+}, valueA: string, valueB: string): string | undefined {
+  if (!valueA.trim() || !valueB.trim()) return `${term.name} needs a value from both parties`;
+  if (term.valueKind === 'percentage' || term.valueKind === 'currency' || term.valueKind === 'number') {
+    if (numericValue(valueA) === undefined || numericValue(valueB) === undefined) {
+      return `${term.name} must use numeric values`;
+    }
+  }
+  if (term.valueKind === 'date' && (!/^\d{4}-\d{2}-\d{2}$/.test(valueA.trim()) || !/^\d{4}-\d{2}-\d{2}$/.test(valueB.trim()))) {
+    return `${term.name} must use dates in YYYY-MM-DD format`;
+  }
+  if (term.validationRule === 'pair_sum') {
+    const target = numericValue(term.validationTarget);
+    const a = numericValue(valueA);
+    const b = numericValue(valueB);
+    if (target === undefined || a === undefined || b === undefined || Math.abs(a + b - target) > 0.0001) {
+      return `${term.name} must total ${term.validationTarget}`;
+    }
+  }
+  if (term.validationRule === 'exact_match' && valueA.trim() !== valueB.trim()) {
+    return `${term.name} must match for both parties`;
+  }
+  if (term.validationRule === 'range') {
+    const bounds = term.validationTarget.split(',').map(numericValue);
+    const a = numericValue(valueA);
+    const b = numericValue(valueB);
+    if (bounds.length !== 2 || bounds[0] === undefined || bounds[1] === undefined || a === undefined || b === undefined || a < bounds[0] || a > bounds[1] || b < bounds[0] || b > bounds[1]) {
+      return `${term.name} must be between ${term.validationTarget}`;
+    }
+  }
+  return undefined;
+}
+
+function validateCurrentTerms(ctx: Ctx, negotiationId: bigint) {
+  const terms = [...ctx.db.term.by_negotiation.filter(negotiationId)];
+  const parties = partiesFor(ctx, negotiationId);
+  const partyA = parties.find(p => p.side === 'a');
+  const partyB = parties.find(p => p.side === 'b');
+  for (const term of terms) {
+    const positions = [...ctx.db.position.by_term.filter(term.id)];
+    const valueA = positions.find(p => p.partyId === partyA?.id)?.value ?? '';
+    const valueB = positions.find(p => p.partyId === partyB?.id)?.value ?? '';
+    const error = validateTermPair(term, valueA, valueB);
+    if (error) throw new SenderError(error);
+  }
+}
+
+function enforceOwnOfferValues(
+  ctx: Ctx,
+  negotiationId: bigint,
+  side: string,
+  terms: Array<{ termId: bigint; valueA: string; valueB: string }>
+) {
+  const parties = partiesFor(ctx, negotiationId);
+  const opposingPartyId = parties.find(p => p.side !== side)?.id;
+  for (const item of terms) {
+    const term = ctx.db.term.id.find(item.termId);
+    if (!term || term.negotiationId !== negotiationId) throw new SenderError('Offer contains an unknown term');
+    const opposingPosition = [...ctx.db.position.by_term.filter(item.termId)].find(p => p.partyId === opposingPartyId);
+    if (opposingPosition) {
+      const opposingValue = side === 'a' ? item.valueB : item.valueA;
+      if (opposingValue !== opposingPosition.value) {
+        throw new SenderError('An offer can only change your party value');
+      }
+    }
+  }
+}
+
 function identityEquals(
   left: { equals(other: typeof left): boolean } | undefined,
   right: { equals(other: typeof left): boolean }
@@ -421,11 +547,27 @@ export const createNegotiation = spacetimedb.reducer(
     terms: t.array(TermSeed),
     supportingContext: t.string(),
     supportDocuments: t.array(SupportDocumentSeed),
+    jurisdictionState: t.string(),
+    jurisdictionCity: t.string(),
+    propertyType: t.string(),
   },
-  (ctx, { title, category, partyALabel, partyBLabel, terms, supportingContext, supportDocuments }) => {
+  (ctx, { title, category, partyALabel, partyBLabel, terms, supportingContext, supportDocuments, jurisdictionState, jurisdictionCity, propertyType }) => {
     const trimmedTitle = title.trim();
     if (!trimmedTitle) throw new SenderError('Title is required');
     if (terms.length === 0) throw new SenderError('Add at least one term');
+    if (!jurisdictionState.trim() || !jurisdictionCity.trim()) throw new SenderError('State and city are required for legal context');
+    if (!['residential', 'commercial'].includes(propertyType)) throw new SenderError('Property type must be residential or commercial');
+    for (const seed of terms) {
+      if (!['free_text', 'percentage', 'currency', 'number', 'date'].includes(seed.valueKind)) {
+        throw new SenderError('Invalid term value format');
+      }
+      if (!['none', 'pair_sum', 'exact_match', 'range'].includes(seed.validationRule)) {
+        throw new SenderError('Invalid term validation rule');
+      }
+      if ((seed.validationRule === 'pair_sum' || seed.validationRule === 'range') && !seed.validationTarget.trim()) {
+        throw new SenderError(`Validation target is required for ${seed.name}`);
+      }
+    }
 
     const joinCode = mintJoinCode(ctx);
     const neg = ctx.db.negotiation.insert({
@@ -435,10 +577,15 @@ export const createNegotiation = spacetimedb.reducer(
       category: category.trim() || 'Custom',
       status: 'open',
       createdAt: ctx.timestamp,
-    createdBy: ctx.sender,
+      createdBy: ctx.sender,
       initialContext: supportingContext.trim(),
       acceptedByA: false,
       acceptedByB: false,
+      definitionsConfirmedByA: true,
+      definitionsConfirmedByB: false,
+      jurisdictionState: jurisdictionState.trim(),
+      jurisdictionCity: jurisdictionCity.trim(),
+      propertyType,
     });
 
     const partyA = ctx.db.party.insert({
@@ -448,6 +595,7 @@ export const createNegotiation = spacetimedb.reducer(
       label: partyALabel.trim() || 'Initiating party',
       identity: ctx.sender,
       online: true,
+      labelConfirmed: true,
     });
 
     const partyB = ctx.db.party.insert({
@@ -457,6 +605,7 @@ export const createNegotiation = spacetimedb.reducer(
       label: partyBLabel.trim() || 'Responding party',
       identity: undefined,
       online: false,
+      labelConfirmed: false,
     });
 
     ctx.db.presence.identity.delete(ctx.sender);
@@ -473,6 +622,11 @@ export const createNegotiation = spacetimedb.reducer(
         negotiationId: neg.id,
         name: seed.name.trim() || `Term ${index + 1}`,
         sortOrder: index,
+        valueKind: seed.valueKind.trim() || 'free_text',
+        unit: seed.unit.trim(),
+        validationRule: seed.validationRule.trim() || 'none',
+        validationTarget: seed.validationTarget.trim(),
+        mediatorPreference: seed.mediatorPreference.trim(),
       });
       ctx.db.position.insert({
         id: 0n,
@@ -495,6 +649,29 @@ export const createNegotiation = spacetimedb.reducer(
         updatedAt: ctx.timestamp,
         initialValue: seed.valueB,
         initialReason: seed.reasonB,
+      });
+    });
+
+    const defaultClauses = [
+      ['Scope and performance', 'The parties will perform the agreed terms in good faith.'],
+      ['Confidentiality', 'Each party will keep non-public matter information confidential unless disclosure is required by law.'],
+      ['Changes', 'Any amendment must be made in writing and accepted by both parties.'],
+      ['Dispute resolution', 'The parties will first return to Settle to document any disagreement before pursuing other remedies.'],
+      ['Governing law', 'Insert the governing jurisdiction.'],
+    ];
+    defaultClauses.forEach(([title, text], index) => {
+      ctx.db.agreement_clause.insert({
+        id: 0n,
+        negotiationId: neg.id,
+        title,
+        positionA: text,
+        positionB: text,
+        resolution: text,
+        status: 'resolved',
+        acceptedByA: true,
+        acceptedByB: true,
+        sortOrder: index,
+        updatedAt: ctx.timestamp,
       });
     });
 
@@ -586,6 +763,9 @@ export const setPosition = spacetimedb.reducer(
     if (caller.id !== row.partyId) {
       throw new SenderError('You can only edit your party positions');
     }
+    if (row.initialValue.trim() || row.value.trim()) {
+      throw new SenderError('Opening value is already recorded; use an offer to update it');
+    }
     const neg = requireNegotiation(ctx, row.negotiationId);
     if (neg.status === 'agreed') throw new SenderError('Deal already finalized');
     clearAgreementAcceptance(ctx, row.negotiationId);
@@ -614,6 +794,9 @@ export const setReason = spacetimedb.reducer(
     const caller = findCallerParty(ctx, row.negotiationId);
     if (caller.id !== row.partyId) {
       throw new SenderError('You can only edit your party reasons');
+    }
+    if (row.initialReason.trim() || row.reason.trim()) {
+      throw new SenderError('Opening reason is already recorded; use an offer to update it');
     }
     const neg = requireNegotiation(ctx, row.negotiationId);
     if (neg.status === 'agreed') throw new SenderError('Deal already finalized');
@@ -647,6 +830,7 @@ export const makeOffer = spacetimedb.reducer(
     const caller = findCallerParty(ctx, negotiationId);
     if (terms.length === 0) throw new SenderError('Offer needs at least one term');
     clearAgreementAcceptance(ctx, negotiationId);
+    enforceOwnOfferValues(ctx, negotiationId, caller.side, terms);
 
     for (const pending of [...ctx.db.offer.by_negotiation.filter(negotiationId)]) {
       if (pending.status === 'pending') {
@@ -696,6 +880,7 @@ export const counterOffer = spacetimedb.reducer(
     const caller = findCallerParty(ctx, args.negotiationId);
     if (args.terms.length === 0) throw new SenderError('Offer needs at least one term');
     clearAgreementAcceptance(ctx, args.negotiationId);
+    enforceOwnOfferValues(ctx, args.negotiationId, caller.side, args.terms);
 
     for (const pending of [...ctx.db.offer.by_negotiation.filter(args.negotiationId)]) {
       if (pending.status === 'pending') {
@@ -775,6 +960,12 @@ export const acceptOffer = spacetimedb.reducer(
       'offer_accepted',
       JSON.stringify({ offerId: String(offerId) })
     );
+    appendEvent(
+      ctx,
+      offerRow.negotiationId,
+      'latest_terms_updated',
+      JSON.stringify({ source: 'offer', offerId: String(offerId) })
+    );
   }
 );
 
@@ -807,10 +998,17 @@ export const submitAgentProposal = spacetimedb.reducer(
     proposalJson: t.string(),
     tradeoff: t.string(),
     reasoning: t.string(),
+    decision: t.string(),
+    concerns: t.string(),
+    requiredChanges: t.string(),
+    citationsJson: t.string(),
   },
-  (ctx, { negotiationId, diagnosis, proposalJson, tradeoff, reasoning }) => {
+  (ctx, { negotiationId, diagnosis, proposalJson, tradeoff, reasoning, decision, concerns, requiredChanges, citationsJson }) => {
     requireNegotiation(ctx, negotiationId);
     findCallerParty(ctx, negotiationId);
+    if (!['proceed', 'caution', 'block', 'human_review'].includes(decision)) {
+      throw new SenderError('Invalid mediator decision');
+    }
 
     for (const existing of [...ctx.db.agent_proposal.by_negotiation.filter(negotiationId)]) {
       if (existing.status === 'pending') {
@@ -829,6 +1027,10 @@ export const submitAgentProposal = spacetimedb.reducer(
       createdAt: ctx.timestamp,
       acceptedByA: false,
       acceptedByB: false,
+      decision,
+      concerns,
+      requiredChanges,
+      citationsJson,
     });
 
     appendEvent(
@@ -846,6 +1048,9 @@ export const acceptProposal = spacetimedb.reducer(
     const proposal = ctx.db.agent_proposal.id.find(proposalId);
     if (!proposal) throw new SenderError('Proposal not found');
     if (proposal.status !== 'pending') throw new SenderError('Proposal is not pending');
+    if (proposal.decision === 'block' || proposal.decision === 'human_review') {
+      throw new SenderError('This matter requires clarification or human legal review before acceptance');
+    }
     findCallerParty(ctx, proposal.negotiationId);
 
     let items: Array<{ termId: string; valueA: string; valueB: string }> = [];
@@ -895,6 +1100,14 @@ export const acceptProposal = spacetimedb.reducer(
         side: caller.side,
       }));
       return;
+    }
+
+    for (const item of items) {
+      const term = ctx.db.term.id.find(BigInt(item.termId));
+      if (term) {
+        const error = validateTermPair(term, item.valueA, item.valueB);
+        if (error) throw new SenderError(error);
+      }
     }
 
     for (const item of items) {
@@ -949,6 +1162,10 @@ export const finalizeDeal = spacetimedb.reducer(
     if (!neg.acceptedByA || !neg.acceptedByB) {
       throw new SenderError('Both parties must accept the latest terms');
     }
+    if (!neg.definitionsConfirmedByA || !neg.definitionsConfirmedByB) {
+      throw new SenderError('Both parties must confirm the term definitions');
+    }
+    validateCurrentTerms(ctx, negotiationId);
     ctx.db.negotiation.id.update({ ...neg, status: 'agreed' });
     ensureAgreementDocument(ctx, negotiationId);
     appendEvent(ctx, negotiationId, 'finalized', '{}');
@@ -960,6 +1177,15 @@ export const acceptCurrentTerms = spacetimedb.reducer(
   (ctx, { negotiationId }) => {
     const neg = requireNegotiation(ctx, negotiationId);
     const caller = findCallerParty(ctx, negotiationId);
+    if (!neg.definitionsConfirmedByA || !neg.definitionsConfirmedByB) {
+      throw new SenderError('Both parties must confirm the term definition');
+    }
+    const unresolvedClauses = [...ctx.db.agreement_clause.by_negotiation.filter(negotiationId)]
+      .filter(clause => clause.status !== 'resolved');
+    if (unresolvedClauses.length > 0) {
+      throw new SenderError('Resolve every clause before accepting the agreement');
+    }
+    validateCurrentTerms(ctx, negotiationId);
     const acceptedByA = neg.acceptedByA || caller.side === 'a';
     const acceptedByB = neg.acceptedByB || caller.side === 'b';
     if (acceptedByA && acceptedByB) {
@@ -967,8 +1193,7 @@ export const acceptCurrentTerms = spacetimedb.reducer(
       ensureAgreementDocument(ctx, negotiationId);
       const document = ctx.db.agreement_document.negotiationId.find(negotiationId);
       if (document) {
-        const clausesIndex = document.content.indexOf('\nClauses');
-        const clauses = clausesIndex >= 0 ? document.content.slice(clausesIndex + 8).trim() : document.clauses;
+        const clauses = currentResolvedClauses(ctx, negotiationId);
         ctx.db.agreement_document.negotiationId.update({
           ...document,
           lockedTerms: currentLockedTerms(ctx, negotiationId),
@@ -979,6 +1204,71 @@ export const acceptCurrentTerms = spacetimedb.reducer(
       ctx.db.negotiation.id.update({ ...neg, status: 'proposed', acceptedByA, acceptedByB });
     }
     appendEvent(ctx, negotiationId, 'terms_accepted', JSON.stringify({ side: caller.side }));
+  }
+);
+
+export const updateClausePosition = spacetimedb.reducer(
+  { clauseId: t.u64(), text: t.string() },
+  (ctx, { clauseId, text }) => {
+    const clause = ctx.db.agreement_clause.id.find(clauseId);
+    if (!clause) throw new SenderError('Clause not found');
+    const neg = requireNegotiation(ctx, clause.negotiationId);
+    if (neg.status === 'agreed') throw new SenderError('Agreement is locked');
+    const caller = findCallerParty(ctx, clause.negotiationId);
+    const nextA = caller.side === 'a' ? text : clause.positionA;
+    const nextB = caller.side === 'b' ? text : clause.positionB;
+    const same = nextA.trim() !== '' && nextA.trim() === nextB.trim();
+    ctx.db.agreement_clause.id.update({
+      ...clause,
+      positionA: nextA,
+      positionB: nextB,
+      resolution: same ? nextA : '',
+      status: same ? 'resolved' : 'conflict',
+      acceptedByA: same,
+      acceptedByB: same,
+      updatedAt: ctx.timestamp,
+    });
+    appendEvent(ctx, clause.negotiationId, 'clause_updated', JSON.stringify({ clauseId: String(clauseId), side: caller.side }));
+  }
+);
+
+export const setClauseResolution = spacetimedb.reducer(
+  { clauseId: t.u64(), resolution: t.string() },
+  (ctx, { clauseId, resolution }) => {
+    const clause = ctx.db.agreement_clause.id.find(clauseId);
+    if (!clause) throw new SenderError('Clause not found');
+    const neg = requireNegotiation(ctx, clause.negotiationId);
+    if (neg.status === 'agreed') throw new SenderError('Agreement is locked');
+    findCallerParty(ctx, clause.negotiationId);
+    const trimmed = resolution.trim();
+    if (!trimmed) throw new SenderError('Resolution cannot be empty');
+    ctx.db.agreement_clause.id.update({
+      ...clause,
+      resolution: trimmed,
+      status: 'proposed',
+      acceptedByA: false,
+      acceptedByB: false,
+      updatedAt: ctx.timestamp,
+    });
+    appendEvent(ctx, clause.negotiationId, 'clause_resolution_proposed', JSON.stringify({ clauseId: String(clauseId) }));
+  }
+);
+
+export const acceptClauseResolution = spacetimedb.reducer(
+  { clauseId: t.u64() },
+  (ctx, { clauseId }) => {
+    const clause = ctx.db.agreement_clause.id.find(clauseId);
+    if (!clause) throw new SenderError('Clause not found');
+    const neg = requireNegotiation(ctx, clause.negotiationId);
+    if (neg.status === 'agreed') throw new SenderError('Agreement is locked');
+    const caller = findCallerParty(ctx, clause.negotiationId);
+    if (clause.status !== 'proposed' || !clause.resolution.trim()) {
+      throw new SenderError('A mediator resolution is required first');
+    }
+    const acceptedByA = clause.acceptedByA || caller.side === 'a';
+    const acceptedByB = clause.acceptedByB || caller.side === 'b';
+    ctx.db.agreement_clause.id.update({ ...clause, acceptedByA, acceptedByB, status: acceptedByA && acceptedByB ? 'resolved' : 'proposed', updatedAt: ctx.timestamp });
+    appendEvent(ctx, clause.negotiationId, 'clause_resolution_accepted', JSON.stringify({ clauseId: String(clauseId), side: caller.side }));
   }
 );
 
@@ -1033,7 +1323,7 @@ export const updateAgreementClauses = spacetimedb.reducer(
   { negotiationId: t.u64(), clauses: t.string() },
   (ctx, { negotiationId, clauses }) => {
     const neg = requireNegotiation(ctx, negotiationId);
-    if (neg.status !== 'agreed') throw new SenderError('Agreement is not locked yet');
+    if (neg.status === 'agreed') throw new SenderError('Agreement is locked after both parties agree');
     findCallerParty(ctx, negotiationId);
     if (clauses.length > 100000) throw new SenderError('Clauses are too large');
     const document = ctx.db.agreement_document.negotiationId.find(negotiationId);
@@ -1095,10 +1385,26 @@ export const setPartyLabel = spacetimedb.reducer(
     const neg = requireNegotiation(ctx, negotiationId);
     if (neg.status === 'agreed') throw new SenderError('Deal already finalized');
     const party = findCallerParty(ctx, negotiationId);
+    if (party.labelConfirmed) throw new SenderError('Party label is already confirmed');
     const trimmed = label.trim();
     if (trimmed.length < 2) throw new SenderError('Party label is required');
     if (trimmed.length > 120) throw new SenderError('Party label is too long');
-    ctx.db.party.id.update({ ...party, label: trimmed });
+    ctx.db.party.id.update({ ...party, label: trimmed, labelConfirmed: true });
     appendEvent(ctx, negotiationId, 'party_label_updated', JSON.stringify({ partyId: String(party.id) }));
+  }
+);
+
+export const confirmTermDefinitions = spacetimedb.reducer(
+  { negotiationId: t.u64() },
+  (ctx, { negotiationId }) => {
+    const neg = requireNegotiation(ctx, negotiationId);
+    if (neg.status === 'agreed') throw new SenderError('Deal already finalized');
+    const caller = findCallerParty(ctx, negotiationId);
+    ctx.db.negotiation.id.update({
+      ...neg,
+      definitionsConfirmedByA: neg.definitionsConfirmedByA || caller.side === 'a',
+      definitionsConfirmedByB: neg.definitionsConfirmedByB || caller.side === 'b',
+    });
+    appendEvent(ctx, negotiationId, 'term_definitions_confirmed', JSON.stringify({ side: caller.side }));
   }
 );

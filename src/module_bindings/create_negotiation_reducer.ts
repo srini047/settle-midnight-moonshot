@@ -27,4 +27,7 @@ export default {
   get supportDocuments() {
     return __t.array(SupportDocumentSeed);
   },
+  jurisdictionState: __t.string(),
+  jurisdictionCity: __t.string(),
+  propertyType: __t.string(),
 };

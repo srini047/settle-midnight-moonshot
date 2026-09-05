@@ -21,4 +21,8 @@ export default __t.row({
   createdAt: __t.timestamp().name("created_at"),
   acceptedByA: __t.bool().name("accepted_by_a"),
   acceptedByB: __t.bool().name("accepted_by_b"),
+  decision: __t.string(),
+  concerns: __t.string(),
+  requiredChanges: __t.string().name("required_changes"),
+  citationsJson: __t.string().name("citations_json"),
 });

@@ -20,6 +20,11 @@ type TermDraft = {
   valueB: string;
   reasonA: string;
   reasonB: string;
+  valueKind: string;
+  unit: string;
+  validationRule: string;
+  validationTarget: string;
+  mediatorPreference: string;
 };
 
 type SupportingFile = {
@@ -36,6 +41,11 @@ const DEFAULT_TERMS: TermDraft[] = [
     valueB: '',
     reasonA: '',
     reasonB: '',
+    valueKind: 'free_text',
+    unit: '',
+    validationRule: 'none',
+    validationTarget: '',
+    mediatorPreference: '',
   },
 ];
 
@@ -49,6 +59,9 @@ export default function HomePage() {
   const [title, setTitle] = useState('');
   const [category, setCategory] = useState<string>('Commercial terms');
   const [customMatter, setCustomMatter] = useState('');
+  const [jurisdictionState, setJurisdictionState] = useState('');
+  const [jurisdictionCity, setJurisdictionCity] = useState('');
+  const [propertyType, setPropertyType] = useState<'residential' | 'commercial'>('residential');
   const [partyALabel, setPartyALabel] = useState('Initiating party');
   const [terms, setTerms] = useState<TermDraft[]>(DEFAULT_TERMS);
   const [supportingContext, setSupportingContext] = useState('');
@@ -66,10 +79,19 @@ export default function HomePage() {
     if (partyALabel.trim().length < 2) {
       return 'The initiating party label is required.';
     }
+    if (jurisdictionState.trim().length < 2 || jurisdictionCity.trim().length < 2) {
+      return 'Add the Indian state and city so the mediator can research the correct law.';
+    }
     if (terms.length === 0) return 'Add at least one negotiation term.';
     if (terms.some(term => term.name.trim().length < 2)) return 'Every term needs a name.';
     if (terms.some(term => !term.valueA.trim() && !term.valueB.trim())) {
       return 'Give each term at least one opening position.';
+    }
+    if (terms.some(term => term.valueKind !== 'free_text' && !term.unit.trim())) {
+      return 'Add a unit for each structured term.';
+    }
+    if (terms.some(term => (term.validationRule === 'pair_sum' || term.validationRule === 'range') && !term.validationTarget.trim())) {
+      return 'Add a validation target for pair-total or range rules.';
     }
     return null;
   };
@@ -103,8 +125,11 @@ export default function HomePage() {
       await createNegotiation({
         title,
         category,
-        partyALabel,
+          partyALabel,
           partyBLabel: '',
+          jurisdictionState,
+          jurisdictionCity,
+          propertyType,
           supportingContext: [
             category === 'Custom matter' ? `Custom matter description:\n${customMatter.trim()}` : '',
             supportingContext.trim(),
@@ -115,7 +140,12 @@ export default function HomePage() {
           valueA: t.valueA,
           valueB: t.valueB,
           reasonA: t.reasonA,
-          reasonB: t.reasonB,
+           reasonB: t.reasonB,
+           valueKind: t.valueKind,
+           unit: t.unit,
+           validationRule: t.validationRule,
+           validationTarget: t.validationTarget,
+           mediatorPreference: t.mediatorPreference,
         })),
       });
       // Wait for subscription insert; also track via effect when join code appears.
@@ -188,13 +218,13 @@ export default function HomePage() {
           <div className="form-section-heading">
             <span>01</span>
             <div>
-              <h3>Matter</h3>
+              <h3>Topic</h3>
               <p>Give the mediator the basic shape of the dispute.</p>
             </div>
           </div>
           <label>
-            Matter type
-            <select value={category} onChange={e => setCategory(e.target.value)}>
+            Topic type
+            <select value={category} onChange={e => setCategory(e.target.value)} className="h-40">
               {CATEGORIES.map(c => (
                 <option key={c} value={c}>
                   {c}
@@ -225,6 +255,24 @@ export default function HomePage() {
               placeholder="Equity split / Rent allocation / Delivery date"
               required
             />
+          </label>
+          <div className="sides">
+            <label>
+              Indian state
+              <input value={jurisdictionState} onChange={e => setJurisdictionState(e.target.value)} placeholder="e.g. Maharashtra" required />
+            </label>
+            <label>
+              City or district
+              <input value={jurisdictionCity} onChange={e => setJurisdictionCity(e.target.value)} placeholder="e.g. Mumbai" required />
+            </label>
+          </div>
+          <label>
+            Premises type
+            <select value={propertyType} onChange={e => setPropertyType(e.target.value as 'residential' | 'commercial')}>
+              <option value="residential">Residential</option>
+              <option value="commercial">Commercial</option>
+            </select>
+            <span className="field-help">The mediator uses this to separate residential tenancy rules from commercial lease rules.</span>
           </label>
           <div className="form-section-heading">
             <span>02</span>
@@ -262,6 +310,42 @@ export default function HomePage() {
                   required
                 />
               </label>
+              <div className="term-definition-grid">
+                <label>
+                  Value format
+                  <select value={term.valueKind} onChange={e => updateTerm(index, { valueKind: e.target.value })}>
+                    <option value="free_text">Free text</option>
+                    <option value="percentage">Percentage</option>
+                    <option value="currency">Currency</option>
+                    <option value="number">Number</option>
+                    <option value="date">Date</option>
+                  </select>
+                </label>
+                <label>
+                  Unit
+                  <input value={term.unit} onChange={e => updateTerm(index, { unit: e.target.value })} placeholder="%, USD, days" />
+                </label>
+                <label>
+                  Final validation
+                  <select value={term.validationRule || 'none'} onChange={e => updateTerm(index, { validationRule: e.target.value, validationTarget: e.target.value === 'pair_sum' || e.target.value === 'range' ? term.validationTarget : '' })}>
+                    <option value="none">No special rule</option>
+                    <option value="pair_sum">Both values total</option>
+                    <option value="exact_match">Both values match</option>
+                    <option value="range">Both values in range</option>
+                  </select>
+                </label>
+                {(term.validationRule === 'pair_sum' || term.validationRule === 'range') && (
+                  <label>
+                    Validation target
+                    <input value={term.validationTarget} onChange={e => updateTerm(index, { validationTarget: e.target.value })} placeholder={term.validationRule === 'range' ? '0,100' : '100'} required />
+                  </label>
+                )}
+              </div>
+              <label>
+                Mediator preference (optional)
+                <input value={term.mediatorPreference} onChange={e => updateTerm(index, { mediatorPreference: e.target.value })} placeholder="e.g. Protect cash flow over timing" />
+              </label>
+              <p className="field-help">This definition is set by the initiating party and reviewed by the responding party before final acceptance.</p>
               <div className="sides">
                 <label>
                   Initiating party position

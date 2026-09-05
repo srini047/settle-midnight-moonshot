@@ -350,6 +350,66 @@ textarea {
   font-size: 0.95rem;
 }
 
+.term-definition-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.85fr) minmax(0, 1.35fr) minmax(0, 0.85fr);
+  gap: 0.65rem;
+  align-items: start;
+}
+
+.term-definition-grid label {
+  min-width: 0;
+}
+
+.term-definition-grid input,
+.term-definition-grid select {
+  height: 3.25rem;
+  min-height: 0;
+}
+
+.definition-row {
+  display: grid;
+  grid-template-columns: minmax(10rem, 1fr) minmax(9rem, 1fr) minmax(11rem, 1.25fr) 1fr;
+  gap: 0.6rem;
+  align-items: center;
+  padding: 0.65rem 0;
+  border-top: 1px solid var(--line);
+  color: var(--ink-soft);
+  font-size: 0.85rem;
+}
+
+.definition-row span {
+  overflow-wrap: anywhere;
+  text-transform: capitalize;
+}
+
+.offer-summary {
+  display: grid;
+  gap: 0.25rem;
+  padding-bottom: 0.35rem;
+  color: var(--ink-soft);
+  font-size: 0.9rem;
+}
+
+.offer-summary strong {
+  color: var(--ink);
+}
+
+.readonly-offer-side input {
+  color: var(--ink-soft);
+  background: color-mix(in srgb, var(--paper-deep) 48%, var(--foam));
+  cursor: not-allowed;
+}
+
+.validation-warning {
+  padding: 0.65rem 0.75rem;
+  border: 1px solid color-mix(in srgb, var(--warn) 38%, var(--line));
+  border-radius: 10px;
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 8%, var(--foam));
+  font-size: 0.88rem;
+}
+
 .label-with-help {
   display: inline-flex;
   align-items: center;
@@ -534,6 +594,13 @@ textarea {
   margin: 0.5rem 0 0.6rem;
 }
 
+.jurisdiction-line {
+  color: var(--ink-soft);
+  font-size: 0.92rem;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
 .presence {
   flex-wrap: wrap;
 }
@@ -590,6 +657,18 @@ textarea {
 .tag.pending {
   background: color-mix(in srgb, var(--accent) 15%, transparent);
   color: var(--accent-deep);
+}
+
+.tag.proceed {
+  background: color-mix(in srgb, var(--ok) 14%, transparent);
+  color: var(--ok);
+}
+
+.tag.caution,
+.tag.block,
+.tag.human_review {
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
+  color: var(--warn);
 }
 
 .tag.rejected,
@@ -736,6 +815,54 @@ textarea {
   gap: 0.45rem;
 }
 
+.clause-workspace {
+  padding-top: 1rem;
+  border-top: 1px solid var(--line);
+}
+
+.clause-workspace h2 {
+  font-family: var(--font-display);
+  font-size: 1.2rem;
+}
+
+.clause-card {
+  display: grid;
+  gap: 0.7rem;
+  padding: 0.85rem;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--foam);
+}
+
+.clause-card.conflict {
+  border-color: color-mix(in srgb, var(--warn) 42%, var(--line));
+  background: color-mix(in srgb, var(--warn) 5%, var(--foam));
+}
+
+.clause-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.65rem;
+}
+
+.clause-columns textarea[readonly] {
+  color: var(--ink-soft);
+  opacity: 0.9;
+}
+
+.clause-resolution,
+.clause-resolution-input {
+  display: grid;
+  gap: 0.4rem;
+  padding: 0.7rem;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 7%, var(--foam));
+}
+
+.clause-resolution p {
+  line-height: 1.45;
+}
+
 .term-lock-label {
   color: var(--ink-soft);
   font-size: 0.75rem;
@@ -783,6 +910,54 @@ textarea {
   border-radius: 14px;
   padding: 0.85rem;
   background: color-mix(in srgb, var(--accent) 5%, transparent);
+}
+
+.mediator-alert,
+.mediator-requirements {
+  display: grid;
+  gap: 0.3rem;
+  padding: 0.7rem;
+  border-radius: 10px;
+  border-left: 3px solid var(--warn);
+  background: color-mix(in srgb, var(--warn) 8%, var(--foam));
+}
+
+.mediator-alert p,
+.mediator-requirements p {
+  color: var(--ink-soft);
+  line-height: 1.4;
+}
+
+.citation-list {
+  display: grid;
+  gap: 0.5rem;
+  padding-top: 0.45rem;
+  border-top: 1px solid var(--line);
+}
+
+.citation-list summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.citation {
+  display: grid;
+  gap: 0.15rem;
+  padding: 0.55rem;
+  border-radius: 9px;
+  background: var(--foam);
+  font-size: 0.82rem;
+}
+
+.citation a {
+  color: var(--accent);
+  font-weight: 700;
+  text-decoration: underline;
+}
+
+.citation span,
+.citation p {
+  color: var(--ink-soft);
 }
 
 .diagnosis {
@@ -853,5 +1028,13 @@ textarea {
 @media (max-width: 520px) {
   .sides {
     grid-template-columns: 1fr;
+  }
+
+  .term-definition-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .definition-row {
+    grid-template-columns: 1fr 1fr;
   }
 }

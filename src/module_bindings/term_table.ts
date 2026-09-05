@@ -15,4 +15,9 @@ export default __t.row({
   negotiationId: __t.u64().name("negotiation_id"),
   name: __t.string(),
   sortOrder: __t.u32().name("sort_order"),
+  valueKind: __t.string().name("value_kind"),
+  unit: __t.string(),
+  validationRule: __t.string().name("validation_rule"),
+  validationTarget: __t.string().name("validation_target"),
+  mediatorPreference: __t.string().name("mediator_preference"),
 });

@@ -16,4 +16,8 @@ export default {
   proposalJson: __t.string(),
   tradeoff: __t.string(),
   reasoning: __t.string(),
+  decision: __t.string(),
+  concerns: __t.string(),
+  requiredChanges: __t.string(),
+  citationsJson: __t.string(),
 };

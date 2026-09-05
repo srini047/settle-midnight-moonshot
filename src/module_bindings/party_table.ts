@@ -17,4 +17,5 @@ export default __t.row({
   label: __t.string(),
   identity: __t.option(__t.identity()),
   online: __t.bool(),
+  labelConfirmed: __t.bool().name("label_confirmed"),
 });

@@ -21,4 +21,9 @@ export default __t.row({
   initialContext: __t.string().name("initial_context"),
   acceptedByA: __t.bool().name("accepted_by_a"),
   acceptedByB: __t.bool().name("accepted_by_b"),
+  definitionsConfirmedByA: __t.bool().name("definitions_confirmed_by_a"),
+  definitionsConfirmedByB: __t.bool().name("definitions_confirmed_by_b"),
+  jurisdictionState: __t.string().name("jurisdiction_state"),
+  jurisdictionCity: __t.string().name("jurisdiction_city"),
+  propertyType: __t.string().name("property_type"),
 });

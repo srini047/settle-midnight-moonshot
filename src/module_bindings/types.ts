@@ -21,8 +21,27 @@ export const AgentProposal = __t.object("AgentProposal", {
   createdAt: __t.timestamp(),
   acceptedByA: __t.bool(),
   acceptedByB: __t.bool(),
+  decision: __t.string(),
+  concerns: __t.string(),
+  requiredChanges: __t.string(),
+  citationsJson: __t.string(),
 });
 export type AgentProposal = __Infer<typeof AgentProposal>;
+
+export const AgreementClause = __t.object("AgreementClause", {
+  id: __t.u64(),
+  negotiationId: __t.u64(),
+  title: __t.string(),
+  positionA: __t.string(),
+  positionB: __t.string(),
+  resolution: __t.string(),
+  status: __t.string(),
+  acceptedByA: __t.bool(),
+  acceptedByB: __t.bool(),
+  sortOrder: __t.u32(),
+  updatedAt: __t.timestamp(),
+});
+export type AgreementClause = __Infer<typeof AgreementClause>;
 
 export const AgreementDocument = __t.object("AgreementDocument", {
   negotiationId: __t.u64(),
@@ -64,6 +83,11 @@ export const Negotiation = __t.object("Negotiation", {
   initialContext: __t.string(),
   acceptedByA: __t.bool(),
   acceptedByB: __t.bool(),
+  definitionsConfirmedByA: __t.bool(),
+  definitionsConfirmedByB: __t.bool(),
+  jurisdictionState: __t.string(),
+  jurisdictionCity: __t.string(),
+  propertyType: __t.string(),
 });
 export type Negotiation = __Infer<typeof Negotiation>;
 
@@ -100,6 +124,7 @@ export const Party = __t.object("Party", {
   label: __t.string(),
   identity: __t.option(__t.identity()),
   online: __t.bool(),
+  labelConfirmed: __t.bool(),
 });
 export type Party = __Infer<typeof Party>;
 
@@ -149,6 +174,11 @@ export const Term = __t.object("Term", {
   negotiationId: __t.u64(),
   name: __t.string(),
   sortOrder: __t.u32(),
+  valueKind: __t.string(),
+  unit: __t.string(),
+  validationRule: __t.string(),
+  validationTarget: __t.string(),
+  mediatorPreference: __t.string(),
 });
 export type Term = __Infer<typeof Term>;
 
@@ -158,6 +188,11 @@ export const TermSeed = __t.object("TermSeed", {
   valueB: __t.string(),
   reasonA: __t.string(),
   reasonB: __t.string(),
+  valueKind: __t.string(),
+  unit: __t.string(),
+  validationRule: __t.string(),
+  validationTarget: __t.string(),
+  mediatorPreference: __t.string(),
 });
 export type TermSeed = __Infer<typeof TermSeed>;
 
