@@ -49,6 +49,7 @@ import RejectOfferReducer from "./reject_offer_reducer";
 import RejectProposalReducer from "./reject_proposal_reducer";
 import SendMediatorMessageReducer from "./send_mediator_message_reducer";
 import SetClauseResolutionReducer from "./set_clause_resolution_reducer";
+import SetPartyContextReducer from "./set_party_context_reducer";
 import SetPartyLabelReducer from "./set_party_label_reducer";
 import SetPositionReducer from "./set_position_reducer";
 import SetPresenceReducer from "./set_presence_reducer";
@@ -278,6 +279,7 @@ const reducersSchema = __reducers(
   __reducerSchema("reject_proposal", RejectProposalReducer),
   __reducerSchema("send_mediator_message", SendMediatorMessageReducer),
   __reducerSchema("set_clause_resolution", SetClauseResolutionReducer),
+  __reducerSchema("set_party_context", SetPartyContextReducer),
   __reducerSchema("set_party_label", SetPartyLabelReducer),
   __reducerSchema("set_position", SetPositionReducer),
   __reducerSchema("set_presence", SetPresenceReducer),

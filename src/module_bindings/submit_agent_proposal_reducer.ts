@@ -20,4 +20,6 @@ export default {
   concerns: __t.string(),
   requiredChanges: __t.string(),
   citationsJson: __t.string(),
+  perspective: __t.string(),
+  requestedByPartyId: __t.u64(),
 };

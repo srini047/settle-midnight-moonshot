@@ -25,4 +25,6 @@ export default __t.row({
   concerns: __t.string(),
   requiredChanges: __t.string().name("required_changes"),
   citationsJson: __t.string().name("citations_json"),
+  perspective: __t.string(),
+  requestedByPartyId: __t.u64().name("requested_by_party_id"),
 });

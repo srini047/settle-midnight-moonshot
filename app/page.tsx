@@ -4,27 +4,17 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useSpacetimeDB, useTable, useReducer } from 'spacetimedb/react';
 import { tables, reducers } from '../src/module_bindings';
+import { getAllStates, getDistricts } from 'india-state-district';
+import mammoth from 'mammoth';
 
-const CATEGORIES = [
-  'Commercial terms',
-  'Lease or tenancy',
-  'Settlement deadline',
-  'Services or scope',
-  'Ownership or equity',
-  'Custom matter',
-] as const;
+const INDIA_STATES = getAllStates();
 
 type TermDraft = {
   name: string;
   valueA: string;
-  valueB: string;
   reasonA: string;
-  reasonB: string;
   valueKind: string;
   unit: string;
-  validationRule: string;
-  validationTarget: string;
-  mediatorPreference: string;
 };
 
 type SupportingFile = {
@@ -34,19 +24,25 @@ type SupportingFile = {
   data: Uint8Array;
 };
 
+const MAX_SUPPORTING_FILES = 5;
+const MAX_SUPPORTING_FILE_BYTES = 2 * 1024 * 1024;
+
+async function prepareSupportingFile(file: File): Promise<SupportingFile> {
+  if (file.size > MAX_SUPPORTING_FILE_BYTES) throw new Error(`${file.name} is larger than 2 MB.`);
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const isDocx = file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || /\.docx$/i.test(file.name);
+  const isText = file.type.startsWith('text/') || /\.(txt|md|csv|json)$/i.test(file.name);
+  let content = '';
+  if (isDocx) {
+    content = (await mammoth.extractRawText({ arrayBuffer: bytes.slice().buffer })).value;
+  } else if (isText) {
+    content = await file.text();
+  }
+  return { name: file.name, mimeType: file.type || 'application/octet-stream', content, data: bytes };
+}
+
 const DEFAULT_TERMS: TermDraft[] = [
-  {
-    name: 'Subject matter',
-    valueA: '',
-    valueB: '',
-    reasonA: '',
-    reasonB: '',
-    valueKind: 'free_text',
-    unit: '',
-    validationRule: 'none',
-    validationTarget: '',
-    mediatorPreference: '',
-  },
+  { name: 'Opening rental position', valueA: '', reasonA: '', valueKind: 'free_text', unit: '' },
 ];
 
 export default function HomePage() {
@@ -57,15 +53,16 @@ export default function HomePage() {
   const joinNegotiation = useReducer(reducers.joinNegotiation);
 
   const [title, setTitle] = useState('');
-  const [category, setCategory] = useState<string>('Commercial terms');
-  const [customMatter, setCustomMatter] = useState('');
   const [jurisdictionState, setJurisdictionState] = useState('');
   const [jurisdictionCity, setJurisdictionCity] = useState('');
+  const [jurisdictionStateCode, setJurisdictionStateCode] = useState('');
   const [propertyType, setPropertyType] = useState<'residential' | 'commercial'>('residential');
   const [partyALabel, setPartyALabel] = useState('Initiating party');
   const [terms, setTerms] = useState<TermDraft[]>(DEFAULT_TERMS);
-  const [supportingContext, setSupportingContext] = useState('');
+  const [rentalContext, setRentalContext] = useState('');
   const [supportingFiles, setSupportingFiles] = useState<SupportingFile[]>([]);
+  const [extracting, setExtracting] = useState(false);
+  const [analysisNotice, setAnalysisNotice] = useState('');
   const [joinCode, setJoinCode] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -73,26 +70,15 @@ export default function HomePage() {
 
   const validate = () => {
     if (title.trim().length < 3) return 'Give the matter a title of at least 3 characters.';
-    if (category === 'Custom matter' && customMatter.trim().length < 10) {
-      return 'Describe the custom matter in at least 10 characters.';
-    }
+    if (rentalContext.trim().length < 20 && supportingFiles.length === 0) return 'Describe the rental situation or attach a supporting file.';
     if (partyALabel.trim().length < 2) {
       return 'The initiating party label is required.';
     }
     if (jurisdictionState.trim().length < 2 || jurisdictionCity.trim().length < 2) {
       return 'Add the Indian state and city so the mediator can research the correct law.';
     }
-    if (terms.length === 0) return 'Add at least one negotiation term.';
-    if (terms.some(term => term.name.trim().length < 2)) return 'Every term needs a name.';
-    if (terms.some(term => !term.valueA.trim() && !term.valueB.trim())) {
-      return 'Give each term at least one opening position.';
-    }
-    if (terms.some(term => term.valueKind !== 'free_text' && !term.unit.trim())) {
-      return 'Add a unit for each structured term.';
-    }
-    if (terms.some(term => (term.validationRule === 'pair_sum' || term.validationRule === 'range') && !term.validationTarget.trim())) {
-      return 'Add a validation target for pair-total or range rules.';
-    }
+    if (terms.length === 0 || terms.some(item => item.name.trim().length < 2)) return 'Give your opening terms a title.';
+    if (terms.some(item => !item.valueA.trim())) return 'Enter an opening value for every term.';
     return null;
   };
 
@@ -106,13 +92,67 @@ export default function HomePage() {
     }
   }, [negotiations, pendingCode, router]);
 
-  const updateTerm = (index: number, patch: Partial<TermDraft>) => {
-    setTerms(prev => prev.map((t, i) => (i === index ? { ...t, ...patch } : t)));
+  const extractRentalTerms = async () => {
+    if (extracting || busy) return;
+    if (rentalContext.trim().length < 20 && supportingFiles.length === 0) {
+      setError('Describe the rental situation or attach a supporting file before extracting terms.');
+      return;
+    }
+    setExtracting(true);
+    setError(null);
+    setAnalysisNotice('');
+    try {
+      const response = await fetch('/api/extract-rental', {
+        method: 'POST',
+        body: (() => {
+          const form = new FormData();
+          form.append('context', rentalContext);
+          form.append('propertyType', propertyType);
+          form.append('state', jurisdictionState);
+          form.append('city', jurisdictionCity);
+          for (const file of supportingFiles) {
+            form.append('files', new Blob([file.data], { type: file.mimeType }), file.name);
+          }
+          return form;
+        })(),
+      });
+      if (!response.ok) {
+        const failure = await response.json().catch(() => null);
+        throw new Error(typeof failure?.error === 'string' ? failure.error : 'Analysis failed. Please try again.');
+      }
+      const data = (await response.json()) as { terms?: Array<{ name: string; valueA: string; reasonA: string; valueKind?: string; unit?: string }> };
+      if (!Array.isArray(data.terms)) throw new Error('Analysis returned an invalid response. Your draft has not changed.');
+      const seen = new Set<string>();
+      const uniqueTerms = data.terms.filter(item => {
+        if (!item || typeof item.name !== 'string' || typeof item.valueA !== 'string' || typeof item.reasonA !== 'string') {
+          throw new Error('Analysis returned an invalid response. Your draft has not changed.');
+        }
+        const key = `${item.name.trim()}\n${item.valueA.trim()}\n${item.reasonA.trim()}`.toLowerCase();
+        if (!item.name.trim() || !item.valueA.trim() || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      if (!uniqueTerms.length) throw new Error('No opening position could be drafted. Your draft is unchanged; enter it manually.');
+      setTerms(uniqueTerms.map(item => ({
+        name: item.name.trim(),
+        valueA: item.valueA.trim(),
+        reasonA: item.reasonA.trim(),
+        valueKind: item.valueKind || 'free_text',
+        unit: item.unit || '',
+      })));
+      setAnalysisNotice('Analysis replaced the opening values below. Review or edit them before creating the room.');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Could not extract rental terms';
+      setError(message);
+      setAnalysisNotice(message);
+    } finally {
+      setExtracting(false);
+    }
   };
 
   const onCreate = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!isActive) return;
+    if (!isActive || extracting || busy) return;
     const validationError = validate();
     if (validationError) {
       setError(validationError);
@@ -124,29 +164,26 @@ export default function HomePage() {
       const before = new Set([...negotiations].map(n => n.joinCode));
       await createNegotiation({
         title,
-        category,
+          category: 'Lease or tenancy',
           partyALabel,
           partyBLabel: '',
           jurisdictionState,
           jurisdictionCity,
           propertyType,
-          supportingContext: [
-            category === 'Custom matter' ? `Custom matter description:\n${customMatter.trim()}` : '',
-            supportingContext.trim(),
-          ].filter(Boolean).join('\n\n'),
+          supportingContext: rentalContext.trim(),
           supportDocuments: supportingFiles,
-          terms: terms.map(t => ({
-          name: t.name,
-          valueA: t.valueA,
-          valueB: t.valueB,
-          reasonA: t.reasonA,
-           reasonB: t.reasonB,
-           valueKind: t.valueKind,
-           unit: t.unit,
-           validationRule: t.validationRule,
-           validationTarget: t.validationTarget,
-           mediatorPreference: t.mediatorPreference,
-        })),
+           terms: terms.map(term => ({
+             name: term.name.trim(),
+             valueA: term.valueA.trim(),
+             reasonA: term.reasonA.trim(),
+             valueB: '',
+             reasonB: '',
+             valueKind: term.valueKind,
+             unit: term.unit,
+             validationRule: 'none',
+             validationTarget: '',
+             mediatorPreference: '',
+           })),
       });
       // Wait for subscription insert; also track via effect when join code appears.
       const waitForNew = window.setInterval(() => {
@@ -183,7 +220,8 @@ export default function HomePage() {
     setBusy(true);
     setError(null);
     try {
-      const code = joinCode.trim().toUpperCase();
+      const parts = joinCode.trim().split(/[/?#]/).filter(Boolean);
+      const code = (parts[parts.length - 1] ?? joinCode.trim()).toUpperCase();
       await joinNegotiation({ joinCode: code });
       setPendingCode(code);
     } catch (err) {
@@ -204,51 +242,26 @@ export default function HomePage() {
           creation and joining will unlock when the connection is ready.
         </p>
       )}
+      <p className="product-kicker">Rental negotiation agent</p>
       <h1 className="brand">Settle</h1>
       <p className="lede">
-        Can&apos;t agree? Put it on one live negotiation table. Two parties. Shared terms.
-        Mediator in the middle.
+        Turn a rental disagreement into a shared, researched path to agreement.
       </p>
 
       <section className="panel stack">
         <h2 style={{ fontFamily: 'var(--font-display)', fontSize: '1.35rem' }}>
-          Start a negotiation
+          Start a rental negotiation
         </h2>
         <form className="stack landing-form" onSubmit={onCreate}>
           <div className="form-section-heading">
             <span>01</span>
             <div>
-              <h3>Topic</h3>
-              <p>Give the mediator the basic shape of the dispute.</p>
+              <h3>Rental situation</h3>
+              <p>Describe what is happening in plain language. The agent will identify possible terms.</p>
             </div>
           </div>
           <label>
-            Topic type
-            <select value={category} onChange={e => setCategory(e.target.value)} className="h-40">
-              {CATEGORIES.map(c => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </select>
-            <span className="field-help">This gives the mediator context and labels the room.</span>
-          </label>
-          {category === 'Custom matter' && (
-            <label>
-              Describe the matter
-              <textarea
-                rows={4}
-                value={customMatter}
-                onChange={e => setCustomMatter(e.target.value)}
-                placeholder="Explain what the parties are trying to resolve."
-                maxLength={5000}
-                required
-              />
-              <span className="field-help">This description is shared with the mediator as background context.</span>
-            </label>
-          )}
-          <label>
-            Dispute title
+            Title
             <input
               value={title}
               onChange={e => setTitle(e.target.value)}
@@ -259,11 +272,22 @@ export default function HomePage() {
           <div className="sides">
             <label>
               Indian state
-              <input value={jurisdictionState} onChange={e => setJurisdictionState(e.target.value)} placeholder="e.g. Maharashtra" required />
+              <select value={jurisdictionStateCode} onChange={e => {
+                const code = e.target.value;
+                setJurisdictionStateCode(code);
+                setJurisdictionState(INDIA_STATES.find(state => state.code === code)?.name ?? '');
+                setJurisdictionCity('');
+              }} required>
+                <option value="">Select state</option>
+                {INDIA_STATES.map(state => <option key={state.code} value={state.code}>{state.name}</option>)}
+              </select>
             </label>
             <label>
-              City or district
-              <input value={jurisdictionCity} onChange={e => setJurisdictionCity(e.target.value)} placeholder="e.g. Mumbai" required />
+              District
+              <select value={jurisdictionCity} onChange={e => setJurisdictionCity(e.target.value)} disabled={!jurisdictionStateCode} required>
+                <option value="">Select district</option>
+                {getDistricts(jurisdictionStateCode).map(district => <option key={district} value={district}>{district}</option>)}
+              </select>
             </label>
           </div>
           <label>
@@ -295,118 +319,46 @@ export default function HomePage() {
           <div className="form-section-heading">
             <span>03</span>
             <div>
-              <h3>Opening position</h3>
-              <p>These positions are preserved as the initial record.</p>
-            </div>
-          </div>
-
-          {terms.map((term, index) => (
-            <div className="term-card stack" key={index}>
-              <label>
-                Term
-                <input
-                  value={term.name}
-                  onChange={e => updateTerm(index, { name: e.target.value })}
-                  required
-                />
-              </label>
-              <div className="term-definition-grid">
-                <label>
-                  Value format
-                  <select value={term.valueKind} onChange={e => updateTerm(index, { valueKind: e.target.value })}>
-                    <option value="free_text">Free text</option>
-                    <option value="percentage">Percentage</option>
-                    <option value="currency">Currency</option>
-                    <option value="number">Number</option>
-                    <option value="date">Date</option>
-                  </select>
-                </label>
-                <label>
-                  Unit
-                  <input value={term.unit} onChange={e => updateTerm(index, { unit: e.target.value })} placeholder="%, USD, days" />
-                </label>
-                <label>
-                  Final validation
-                  <select value={term.validationRule || 'none'} onChange={e => updateTerm(index, { validationRule: e.target.value, validationTarget: e.target.value === 'pair_sum' || e.target.value === 'range' ? term.validationTarget : '' })}>
-                    <option value="none">No special rule</option>
-                    <option value="pair_sum">Both values total</option>
-                    <option value="exact_match">Both values match</option>
-                    <option value="range">Both values in range</option>
-                  </select>
-                </label>
-                {(term.validationRule === 'pair_sum' || term.validationRule === 'range') && (
-                  <label>
-                    Validation target
-                    <input value={term.validationTarget} onChange={e => updateTerm(index, { validationTarget: e.target.value })} placeholder={term.validationRule === 'range' ? '0,100' : '100'} required />
-                  </label>
-                )}
-              </div>
-              <label>
-                Mediator preference (optional)
-                <input value={term.mediatorPreference} onChange={e => updateTerm(index, { mediatorPreference: e.target.value })} placeholder="e.g. Protect cash flow over timing" />
-              </label>
-              <p className="field-help">This definition is set by the initiating party and reviewed by the responding party before final acceptance.</p>
-              <div className="sides">
-                <label>
-                  Initiating party position
-                  <input
-                    value={term.valueA}
-                    onChange={e => updateTerm(index, { valueA: e.target.value })}
-                    placeholder="e.g. 55%"
-                  />
-                </label>
-              </div>
-              <div className="sides">
-                <label>
-                  Initiating party reason
-                  <textarea
-                    rows={3}
-                    value={term.reasonA}
-                    onChange={e => updateTerm(index, { reasonA: e.target.value })}
-                  />
-                </label>
-              </div>
-            </div>
-          ))}
-
-          <div className="form-section-heading">
-            <span>04</span>
-            <div>
-              <h3>Context</h3>
-              <p>Optional background material for the mediator.</p>
+              <h3>Context and opening terms</h3>
+              <p>Type your opening terms below, or let Analyze fill the same fields from your context.</p>
             </div>
           </div>
 
           <label>
-            <span className="label-with-help">
-              Supporting context (optional)
-              <button type="button" className="help-icon" title="Context gives the mediator background facts, clauses, or documents. It is shared with both parties and is not itself a negotiated term." aria-label="About supporting context">?</button>
-            </span>
+            Rental context
             <textarea
-              rows={4}
-              value={supportingContext}
-              onChange={e => setSupportingContext(e.target.value)}
-              placeholder="Paste a clause, background facts, or instructions the mediator should consider."
+              rows={6}
+              value={rentalContext}
+              onChange={e => setRentalContext(e.target.value)}
+              placeholder="Example: I rent a two-bedroom flat in Mumbai. The landlord wants to increase rent next month and keep the full deposit for repainting. I want a predictable increase and a fair repair process."
               maxLength={100000}
+              required={supportingFiles.length === 0}
+              readOnly={extracting || busy}
             />
+            <span className="field-help">Both parties will see this context. It helps the mediator research the right law and market evidence.</span>
+            <span className="label-with-help">
+              Attach context files (optional)
+              <button type="button" className="help-icon" title="Attach a lease, notice, receipt, image, or other rental evidence. Files are shared with both parties and the mediator." aria-label="About context files">?</button>
+            </span>
             <input
               type="file"
               multiple
-              accept="*/*"
+              disabled={extracting || busy}
+              accept=".pdf,.docx,.txt,.md,.png,.jpg,.jpeg,.webp,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,image/*"
               onChange={async e => {
                 const input = e.currentTarget;
                 const files = Array.from(e.target.files ?? []);
-                const next = await Promise.all(files.map(async file => {
-                  const bytes = new Uint8Array(await file.arrayBuffer());
-                  const readable = file.type.startsWith('text/') || /\.(txt|md|csv|json)$/i.test(file.name);
-                  return {
-                    name: file.name,
-                    mimeType: file.type || 'application/octet-stream',
-                    content: readable ? await file.text() : '',
-                    data: bytes,
-                  };
-                }));
-                setSupportingFiles(previous => [...previous, ...next]);
+                if (supportingFiles.length + files.length > MAX_SUPPORTING_FILES) {
+                  setError(`You can attach up to ${MAX_SUPPORTING_FILES} files.`);
+                  input.value = '';
+                  return;
+                }
+                try {
+                  const next = await Promise.all(files.map(prepareSupportingFile));
+                  setSupportingFiles(previous => [...previous, ...next]);
+                } catch (err) {
+                  setError(err instanceof Error ? err.message : 'Could not read file');
+                }
                 input.value = '';
               }}
             />
@@ -415,15 +367,57 @@ export default function HomePage() {
                 {supportingFiles.map((file, index) => (
                   <div className="file-chip" key={`${file.name}-${index}`}>
                     <span>{file.name}</span>
-                    <button type="button" onClick={() => setSupportingFiles(files => files.filter((_, i) => i !== index))}>Remove</button>
+                    <button type="button" disabled={extracting || busy} onClick={() => setSupportingFiles(files => files.filter((_, i) => i !== index))}>Remove</button>
                   </div>
                 ))}
               </div>
             )}
+            <button type="button" className="btn ghost" aria-controls="opening-terms" disabled={extracting || busy || (rentalContext.trim().length < 20 && supportingFiles.length === 0)} onClick={() => void extractRentalTerms()}>
+              {extracting ? 'Analyzing context…' : 'Analyze context and files'}
+            </button>
           </label>
 
+          <section id="opening-terms" className="term-card stack" aria-labelledby="opening-terms-heading" aria-busy={extracting}>
+            <h3 id="opening-terms-heading">Your opening terms</h3>
+            <p id="opening-terms-help" className="field-help">
+              Each row is one value. Write them manually or use Analyze above; analyzing again replaces this list.
+            </p>
+            <p role="status" className={analysisNotice.startsWith('No opening') ? 'analysis-status warning' : 'muted'}>
+              {extracting ? 'Analyzing your context and files...' : analysisNotice}
+            </p>
+            <div className="compact-term-list">
+              {terms.map((item, index) => (
+                <div className="compact-term-row" key={`${item.name}-${index}`}>
+                  <input
+                    aria-label={`Term ${index + 1} name`}
+                    value={item.name}
+                    onChange={e => setTerms(previous => previous.map((current, i) => i === index ? { ...current, name: e.target.value } : current))}
+                    readOnly={extracting || busy}
+                    placeholder="Term, e.g. Monthly rent"
+                    required
+                  />
+                  <input
+                    aria-label={`Term ${index + 1} opening value`}
+                    value={item.valueA}
+                    onChange={e => { setTerms(previous => previous.map((current, i) => i === index ? { ...current, valueA: e.target.value } : current)); setAnalysisNotice(''); }}
+                    readOnly={extracting || busy}
+                    placeholder="Your value"
+                    required
+                  />
+                  <input
+                    aria-label={`Term ${index + 1} unit`}
+                    value={item.unit}
+                    onChange={e => setTerms(previous => previous.map((current, i) => i === index ? { ...current, unit: e.target.value } : current))}
+                    readOnly={extracting || busy}
+                    placeholder="Unit, e.g. INR/month"
+                  />
+                </div>
+              ))}
+            </div>
+          </section>
+
           <div className="row">
-            <button type="submit" className="btn" disabled={!isActive || busy}>
+            <button type="submit" className="btn" disabled={!isActive || busy || extracting}>
               {busy ? 'Opening room…' : 'Create room'}
             </button>
           </div>
