@@ -92,7 +92,7 @@ tsc/testdata/baselines/tmp
 /.failed-tests
 /TEST-results.xml
 /*v8.log
-/lib/
+# /lib/
 /internal/
 /scripts/eslint/built/
 /scripts/debug.bat
