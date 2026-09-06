@@ -11,20 +11,30 @@
       "static/chunks/main-app.js",
       "static/chunks/app/not-found.js"
     ],
-    "/status/page": [
+    "/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/status/page.js"
+      "static/chunks/app/page.js"
     ],
-    "/api/room/validate/route": [
+    "/api/extract-rental/route": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/api/room/validate/route.js"
+      "static/chunks/app/api/extract-rental/route.js"
     ],
-    "/api/voice/assistant/route": [
+    "/room/[code]/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/api/voice/assistant/route.js"
+      "static/chunks/app/room/[code]/page.js"
+    ],
+    "/api/agreement-draft/route": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/api/agreement-draft/route.js"
+    ],
+    "/room/[code]/agreement/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/room/[code]/agreement/page.js"
     ]
   }
 }
