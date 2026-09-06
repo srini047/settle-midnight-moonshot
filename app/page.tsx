@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { useSpacetimeDB, useTable, useReducer } from 'spacetimedb/react';
 import { tables, reducers } from '../src/module_bindings';
 import { getAllStates, getDistricts } from 'india-state-district';
@@ -70,7 +71,7 @@ export default function HomePage() {
 
   const validate = () => {
     if (title.trim().length < 3) return 'Give the matter a title of at least 3 characters.';
-    if (rentalContext.trim().length < 20 && supportingFiles.length === 0) return 'Describe the rental situation or attach a supporting file.';
+    if (rentalContext.trim().length < 20) return 'Describe the rental situation in at least 20 characters. Attachments are optional.';
     if (partyALabel.trim().length < 2) {
       return 'The initiating party label is required.';
     }
@@ -94,8 +95,8 @@ export default function HomePage() {
 
   const extractRentalTerms = async () => {
     if (extracting || busy) return;
-    if (rentalContext.trim().length < 20 && supportingFiles.length === 0) {
-      setError('Describe the rental situation or attach a supporting file before extracting terms.');
+    if (rentalContext.trim().length < 20) {
+      setError('Describe the rental situation in at least 20 characters before analyzing. Attachments are optional.');
       return;
     }
     setExtracting(true);
@@ -247,6 +248,7 @@ export default function HomePage() {
       <p className="lede">
         Turn a rental disagreement into a shared, researched path to agreement.
       </p>
+      <Link href="/status" className="btn ghost micro">Check contract status by voice</Link>
 
       <section className="panel stack">
         <h2 style={{ fontFamily: 'var(--font-display)', fontSize: '1.35rem' }}>
@@ -325,17 +327,17 @@ export default function HomePage() {
           </div>
 
           <label>
-            Rental context
+            Rental context (atleast 20 characters)
             <textarea
               rows={6}
               value={rentalContext}
               onChange={e => setRentalContext(e.target.value)}
               placeholder="Example: I rent a two-bedroom flat in Mumbai. The landlord wants to increase rent next month and keep the full deposit for repainting. I want a predictable increase and a fair repair process."
               maxLength={100000}
-              required={supportingFiles.length === 0}
+               required
               readOnly={extracting || busy}
             />
-            <span className="field-help">Both parties will see this context. It helps the mediator research the right law and market evidence.</span>
+             <span className="field-help">Required: at least 20 characters. Both parties will see this context. Attachments below are optional evidence.</span>
             <span className="label-with-help">
               Attach context files (optional)
               <button type="button" className="help-icon" title="Attach a lease, notice, receipt, image, or other rental evidence. Files are shared with both parties and the mediator." aria-label="About context files">?</button>
@@ -372,7 +374,7 @@ export default function HomePage() {
                 ))}
               </div>
             )}
-            <button type="button" className="btn ghost" aria-controls="opening-terms" disabled={extracting || busy || (rentalContext.trim().length < 20 && supportingFiles.length === 0)} onClick={() => void extractRentalTerms()}>
+            <button type="button" className="btn ghost" aria-controls="opening-terms" disabled={extracting || busy || rentalContext.trim().length < 20} onClick={() => void extractRentalTerms()}>
               {extracting ? 'Analyzing context…' : 'Analyze context and files'}
             </button>
           </label>
