@@ -69,6 +69,9 @@ SPACETIMEDB_DB_NAME=settle
 SPACETIMEDB_HOST=wss://maincloud.spacetimedb.com
 OPENAI_API_KEY=your-openai-key
 TAVILY_API_KEY=your-tavily-key
+DOCUMENSO_API_KEY=your-documenso-api-key
+# Optional for a self-hosted Documenso instance:
+# DOCUMENSO_BASE_URL=https://your-instance.com/api/v2
 ```
 
 ## Development
