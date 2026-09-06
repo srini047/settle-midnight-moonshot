@@ -17,4 +17,9 @@ export default __t.row({
   updatedAt: __t.timestamp().name("updated_at"),
   lockedTerms: __t.string().name("locked_terms"),
   clauses: __t.string(),
+  revision: __t.u64(),
+  acceptedByA: __t.bool().name("accepted_by_a"),
+  acceptedByB: __t.bool().name("accepted_by_b"),
+  acceptedRevisionA: __t.u64().name("accepted_revision_a"),
+  acceptedRevisionB: __t.u64().name("accepted_revision_b"),
 });

@@ -11,15 +11,35 @@
       "static/chunks/main-app.js",
       "static/chunks/app/not-found.js"
     ],
-    "/room/[code]/agreement/page": [
+    "/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/room/[code]/agreement/page.js"
+      "static/chunks/app/page.js"
+    ],
+    "/api/extract-rental/route": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/api/extract-rental/route.js"
     ],
     "/room/[code]/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
       "static/chunks/app/room/[code]/page.js"
+    ],
+    "/api/agreement-draft/route": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/api/agreement-draft/route.js"
+    ],
+    "/room/[code]/agreement/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/room/[code]/agreement/page.js"
+    ],
+    "/api/mediate/route": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/api/mediate/route.js"
     ]
   }
 }

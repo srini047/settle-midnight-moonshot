@@ -7,31 +7,59 @@ import { useReducer, useSpacetimeDB, useTable } from 'spacetimedb/react';
 import { jsPDF } from 'jspdf';
 import { reducers, tables } from '../../../../src/module_bindings';
 
-function initialDraft(title: string, category: string) {
-  return [
-    title,
-    '',
-    `Rental matter: ${category}`,
-    '',
-    'Agreed terms',
-    '[Terms will appear here as the parties negotiate.]',
-    '',
-    'Clauses',
-    '1. Scope and performance: The parties will perform the agreed terms in good faith.',
-    '2. Confidentiality: Each party will keep non-public matter information confidential unless disclosure is required by law.',
-    '3. Changes: Any amendment must be made in writing and accepted by both parties.',
-    '4. Dispute resolution: The parties will first return to Settle to document any disagreement before pursuing other remedies.',
-    '5. Governing law: [Insert governing jurisdiction].',
-    '',
-    'Execution',
-    'Initiating party signature: ____________________    Date: __________',
-    'Responding party signature: ____________________    Date: __________',
-  ].join('\n');
+type DraftSection = { id: string; title: string; body: string };
+type DiffLine = { type: 'same' | 'add' | 'remove'; text: string };
+
+function formatTime(micros: bigint): string {
+  return new Date(Number(micros / 1000n)).toLocaleString([], {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  });
 }
 
-function extractClauses(content: string) {
-  const marker = content.indexOf('\nClauses');
-  return marker >= 0 ? content.slice(marker + 8).trim() : content;
+function parseDraftSections(value: string): DraftSection[] {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((item): item is DraftSection => Boolean(
+      item && typeof item === 'object' && 'id' in item && 'title' in item && 'body' in item
+      && typeof item.id === 'string' && typeof item.title === 'string' && typeof item.body === 'string'
+    ));
+  } catch {
+    return [];
+  }
+}
+
+function buildLineDiff(before: string, after: string): DiffLine[] {
+  const oldLines = before.split('\n');
+  const newLines = after.split('\n');
+  const matrix = Array.from({ length: oldLines.length + 1 }, () => new Uint16Array(newLines.length + 1));
+
+  for (let oldIndex = oldLines.length - 1; oldIndex >= 0; oldIndex -= 1) {
+    for (let newIndex = newLines.length - 1; newIndex >= 0; newIndex -= 1) {
+      matrix[oldIndex]![newIndex] = oldLines[oldIndex] === newLines[newIndex]
+        ? matrix[oldIndex + 1]![newIndex + 1]! + 1
+        : Math.max(matrix[oldIndex + 1]![newIndex]!, matrix[oldIndex]![newIndex + 1]!);
+    }
+  }
+
+  const diff: DiffLine[] = [];
+  let oldIndex = 0;
+  let newIndex = 0;
+  while (oldIndex < oldLines.length || newIndex < newLines.length) {
+    if (oldIndex < oldLines.length && newIndex < newLines.length && oldLines[oldIndex] === newLines[newIndex]) {
+      diff.push({ type: 'same', text: oldLines[oldIndex]! });
+      oldIndex += 1;
+      newIndex += 1;
+    } else if (oldIndex < oldLines.length && (newIndex >= newLines.length || matrix[oldIndex + 1]![newIndex]! >= matrix[oldIndex]![newIndex + 1]!)) {
+      diff.push({ type: 'remove', text: oldLines[oldIndex]! });
+      oldIndex += 1;
+    } else {
+      diff.push({ type: 'add', text: newLines[newIndex]! });
+      newIndex += 1;
+    }
+  }
+  return diff;
 }
 
 export default function AgreementPage() {
@@ -41,11 +69,19 @@ export default function AgreementPage() {
   const [negotiations, negotiationsReady] = useTable(tables.negotiation);
   const [documents] = useTable(tables.agreementDocument);
   const [clausesAll] = useTable(tables.agreementClause);
+  const [revisionsAll] = useTable(tables.agreementRevision);
+  const [draftsAll] = useTable(tables.agreementDraft);
   const [partiesAll] = useTable(tables.party);
+  const [termsAll] = useTable(tables.term);
+  const [positionsAll] = useTable(tables.position);
+  const [supportDocumentsAll] = useTable(tables.supportDocument);
+
   const updateDocument = useReducer(reducers.updateAgreementDocument);
-  const updateClausePosition = useReducer(reducers.updateClausePosition);
-  const setClauseResolution = useReducer(reducers.setClauseResolution);
-  const acceptClauseResolution = useReducer(reducers.acceptClauseResolution);
+  const saveAgreementDraft = useReducer(reducers.saveAgreementDraft);
+  const applyAgreementDraft = useReducer(reducers.applyAgreementDraft);
+  const restoreAgreementRevision = useReducer(reducers.restoreAgreementRevision);
+  const acceptAgreementRevision = useReducer(reducers.acceptAgreementRevision);
+
   const negotiation = useMemo(
     () => [...negotiations].find(item => item.joinCode.toUpperCase() === code.toUpperCase()),
     [negotiations, code]
@@ -54,294 +90,302 @@ export default function AgreementPage() {
     () => negotiation ? [...documents].find(item => item.negotiationId === negotiation.id) : undefined,
     [documents, negotiation]
   );
-  const clausesRows = useMemo(
-    () => negotiation ? [...clausesAll].filter(item => item.negotiationId === negotiation.id).sort((a, b) => a.sortOrder - b.sortOrder) : [],
+  const clauses = useMemo(
+    () => negotiation
+      ? [...clausesAll].filter(item => item.negotiationId === negotiation.id).sort((a, b) => a.sortOrder - b.sortOrder)
+      : [],
     [clausesAll, negotiation]
+  );
+  const revisions = useMemo(
+    () => negotiation
+      ? [...revisionsAll].filter(item => item.negotiationId === negotiation.id).sort((a, b) => Number(b.revision - a.revision))
+      : [],
+    [revisionsAll, negotiation]
+  );
+  const pendingDraft = useMemo(
+    () => negotiation ? [...draftsAll].find(item => item.negotiationId === negotiation.id && item.status === 'pending') : undefined,
+    [draftsAll, negotiation]
   );
   const parties = useMemo(
     () => negotiation ? [...partiesAll].filter(item => item.negotiationId === negotiation.id) : [],
-    [negotiation, partiesAll]
+    [partiesAll, negotiation]
   );
-  const locked = negotiation?.status === 'agreed';
-  const [draft, setDraft] = useState('');
-  const [dirty, setDirty] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [clauseDrafts, setClauseDrafts] = useState<Record<string, string>>({});
-
   const mySide = useMemo(() => {
-    if (!myIdentity || !negotiation) return undefined;
+    if (!myIdentity) return undefined;
     return parties.find(item => item.identity?.toHexString() === myIdentity.toHexString())?.side;
-  }, [myIdentity, negotiation, parties]);
+  }, [myIdentity, parties]);
+
+  const [documentDraft, setDocumentDraft] = useState('');
+  const [documentDirty, setDocumentDirty] = useState(false);
+  const [baseRevision, setBaseRevision] = useState<bigint | null>(null);
+  const [conflict, setConflict] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [drafting, setDrafting] = useState(false);
+
+  const locked = negotiation?.status === 'agreed';
+  const mineAccepted = document && (mySide === 'a'
+    ? document.acceptedByA && document.acceptedRevisionA === document.revision
+    : document.acceptedByB && document.acceptedRevisionB === document.revision);
 
   useEffect(() => {
-    if (clausesRows.length === 0) return;
-    setClauseDrafts(previous => {
-      const next = { ...previous };
-      for (const clause of clausesRows) {
-        next[`${clause.id}:a`] ??= clause.positionA;
-        next[`${clause.id}:b`] ??= clause.positionB;
-      }
-      return next;
-    });
-  }, [clausesRows]);
+    if (!document || documentDirty) return;
+    setDocumentDraft(document.content);
+    setBaseRevision(document.revision);
+    setConflict(false);
+  }, [document, documentDirty]);
 
   useEffect(() => {
-    if (!negotiation || dirty) return;
-    const content = document?.content ?? initialDraft(negotiation.title, negotiation.category);
-    setDraft(content);
-  }, [document?.content, dirty, negotiation]);
+    if (documentDirty && baseRevision !== null && document && document.revision !== baseRevision) {
+      setConflict(true);
+    }
+  }, [baseRevision, document, documentDirty]);
 
-  if (!negotiationsReady) {
-    return (
-      <main className="shell loading-state">
-        <div className="spinner" aria-hidden="true" />
-        <h1>Loading agreement</h1>
-        <p className="muted">Opening the shared document…</p>
-      </main>
-    );
-  }
+  const buildDraftRequest = () => {
+    if (!negotiation || !document) throw new Error('Agreement is still loading');
+    const terms = [...termsAll]
+      .filter(term => term.negotiationId === negotiation.id)
+      .sort((a, b) => a.sortOrder - b.sortOrder)
+      .map(term => {
+        const positions = [...positionsAll].filter(position => position.termId === term.id);
+        return {
+          name: term.name,
+          valueA: positions.find(position => parties.find(p => p.id === position.partyId)?.side === 'a')?.value ?? '',
+          valueB: positions.find(position => parties.find(p => p.id === position.partyId)?.side === 'b')?.value ?? '',
+        };
+      });
+    return {
+      title: negotiation.title,
+      category: negotiation.category,
+      initialContext: negotiation.initialContext,
+      responderContext: negotiation.responderContext,
+      jurisdictionState: negotiation.jurisdictionState,
+      jurisdictionCity: negotiation.jurisdictionCity,
+      propertyType: negotiation.propertyType,
+      terms,
+      clauses: clauses.map(clause => ({ id: String(clause.id), title: clause.title, text: clause.resolution })),
+      currentContent: document.content,
+      currentRevision: document.revision.toString(),
+      supportDocuments: [...supportDocumentsAll]
+        .filter(item => item.negotiationId === negotiation.id)
+        .map(item => ({ name: item.name, mimeType: item.mimeType, content: item.content })),
+    };
+  };
 
-  if (!negotiation) {
-    return (
-      <main className="shell rise">
-        <p className="pill">Agreement unavailable</p>
-        <h1 className="brand">Matter not found</h1>
-        <Link href="/" className="btn">Back to Settle</Link>
-      </main>
-    );
-  }
-
-  const save = async () => {
-    setSaving(true);
+  const saveDocument = async () => {
+    if (!document || locked || conflict || baseRevision === null || !documentDirty) return;
+    setBusy('Saving agreement…');
     setError(null);
     try {
-      if (locked) return;
-      await updateDocument({ negotiationId: negotiation.id, content: draft });
-      setDirty(false);
+      await updateDocument({ negotiationId: document.negotiationId, content: documentDraft, expectedRevision: baseRevision });
+      setDocumentDirty(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not save agreement');
     } finally {
-      setSaving(false);
+      setBusy(null);
+    }
+  };
+
+  const generateDraft = async () => {
+    if (!document || locked || documentDirty) return;
+    setDrafting(true);
+    setError(null);
+    try {
+      const response = await fetch('/api/agreement-draft', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(buildDraftRequest()),
+      });
+      if (!response.ok) throw new Error(await response.text());
+      const result = await response.json() as { summary: string; content: string; sections: DraftSection[] };
+      await saveAgreementDraft({
+        negotiationId: negotiation!.id,
+        baseRevision: document.revision,
+        content: result.content,
+        clauses: JSON.stringify(result.sections),
+        summary: result.summary,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not generate an agreement draft');
+    } finally {
+      setDrafting(false);
+    }
+  };
+
+  const applyDraft = async () => {
+    if (!document || !pendingDraft || conflict || documentDirty) return;
+    setBusy('Applying AI draft…');
+    setError(null);
+    try {
+      await applyAgreementDraft({ negotiationId: document.negotiationId, expectedRevision: document.revision });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not apply AI draft');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const restoreRevision = async (revisionId: bigint) => {
+    if (!document || locked || conflict || documentDirty) return;
+    setBusy('Restoring revision…');
+    setError(null);
+    try {
+      await restoreAgreementRevision({ negotiationId: document.negotiationId, revisionId, expectedRevision: document.revision });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not restore revision');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const accept = async () => {
+    if (!document || locked || documentDirty || documentDraft.trim().length < 500) return;
+    setBusy('Recording acceptance…');
+    setError(null);
+    try {
+      await acceptAgreementRevision({ negotiationId: document.negotiationId, revision: document.revision });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not accept agreement');
+    } finally {
+      setBusy(null);
     }
   };
 
   const downloadPdf = () => {
+    if (!document || !negotiation) return;
     const pdf = new jsPDF();
-    const clauseText = clausesRows.length > 0
-      ? clausesRows.map(clause => `${clause.title}: ${clause.resolution || clause.positionA}`).join('\n')
-      : document?.clauses ?? '';
-    const content = locked
-      ? `${document?.lockedTerms || extractClauses(draft)}\n\nClauses\n${clauseText}`
-      : draft || initialDraft(negotiation.title, negotiation.category);
-    const lines = pdf.splitTextToSize(content, 175);
+    const lines = pdf.splitTextToSize(document.content, 175);
     pdf.setFontSize(16);
     pdf.text(negotiation.title, 18, 20);
     pdf.setFontSize(10);
-    pdf.text(`Settle agreement · ${negotiation.joinCode}`, 18, 28);
+    pdf.text(`Settle agreement · ${negotiation.joinCode} · Revision ${String(document.revision)}`, 18, 28);
     pdf.setFontSize(11);
     pdf.text(lines, 18, 42);
     pdf.save(`${negotiation.joinCode.toLowerCase()}-agreement.pdf`);
   };
 
-  const saveClausePosition = async (clauseId: bigint, side: 'a' | 'b') => {
-    if (locked || mySide !== side) return;
-    try {
-      await updateClausePosition({ clauseId, text: clauseDrafts[`${clauseId}:${side}`] ?? '' });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not save clause position');
-    }
-  };
+  if (!negotiationsReady) {
+    return <main className="shell loading-state"><div className="spinner" aria-hidden="true" /><h1>Loading agreement</h1><p className="muted">Opening the shared document…</p></main>;
+  }
+
+  if (!negotiation || !document) {
+    return <main className="shell rise"><p className="pill">Agreement unavailable</p><h1 className="brand">Matter not found</h1><Link href="/" className="btn">Back to Settle</Link></main>;
+  }
+
+  const draftSections = pendingDraft ? parseDraftSections(pendingDraft.clauses) : [];
+  const agreementDiff = pendingDraft ? buildLineDiff(document.content, pendingDraft.content) : [];
 
   return (
     <main className="shell rise">
       <div className="room-top">
         <Link href={`/room/${code}`} className="btn micro ghost">← Negotiation</Link>
-        <span className={`tag ${locked ? 'agreed' : 'pending'}`}>{locked ? 'Locked' : 'Working draft'}</span>
+        <span className={`tag ${locked ? 'agreed' : 'pending'}`}>{locked ? 'Locked' : `Revision ${String(document.revision)}`}</span>
       </div>
+
       <section className="deal-banner">
-        <h2>{locked ? 'Agreement reached' : 'Working agreement'}</h2>
+        <h2>{locked ? 'Agreement reached' : 'Common rental agreement'}</h2>
         <p className="muted">
-          {locked
-            ? 'Both parties accepted the latest terms. This document is read-only.'
-            : 'Edit clauses and drafting language here while the parties work toward agreement.'}
+          {locked ? 'Both parties accepted this revision. The document is read-only.' : 'A complete rental agreement shared live between both parties. Edit the wording directly or ask AI to update the draft from the latest context.'}
         </p>
       </section>
-      <section className="panel stack locked-document">
-        <div>
-          <p className="pill">{negotiation.category}</p>
-          <h1>{negotiation.title}</h1>
+
+      <section className="panel stack">
+        <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start' }}>
+          <div>
+            <p className="pill">{negotiation.category}</p>
+            <h1>{negotiation.title}</h1>
+            <p className="muted">Revision {String(document.revision)} · Updated {formatTime(document.updatedAt.microsSinceUnixEpoch)}</p>
+          </div>
+          <span className="tag">{mySide === 'a' ? 'Initiating party' : 'Responding party'}</span>
         </div>
-        {clausesRows.length > 0 && (
-          <section className="clause-workspace stack">
-            <div className="row" style={{ justifyContent: 'space-between' }}>
-              <div>
-                <h2>Clause comparison</h2>
-                <p className="muted">See both positions side by side. Differences stay visible until the mediator or both parties resolve them.</p>
-              </div>
-              <span className="tag">{clausesRows.filter(item => item.status === 'conflict').length} conflicts</span>
-            </div>
-            {clausesRows.map(clause => {
-              const conflict = clause.status === 'conflict';
-              const validResolution = clause.status === 'resolved' && clause.resolution.trim().length >= 3;
-              return (
-                <article className={`clause-card ${conflict ? 'conflict' : 'resolved'}`} key={String(clause.id)}>
-                  <div className="row" style={{ justifyContent: 'space-between' }}>
-                    <h3>{clause.title}</h3>
-                    <span className={`tag ${conflict ? 'gap' : 'aligned'}`}>{conflict ? 'Different' : clause.status}</span>
-                  </div>
-                  {validResolution && (
-                    <div className="clause-current">
-                      <strong>Current agreed clause</strong>
-                      <p>{clause.resolution}</p>
-                    </div>
-                  )}
-                  <details className="clause-originals" open={!validResolution}>
-                    <summary>{validResolution ? 'View original party positions' : 'Party positions'}</summary>
-                    <div className="clause-columns">
-                    <label>
-                      {validResolution ? 'Original initiating position' : 'Initiating party'}
-                      <textarea
-                        rows={4}
-                        readOnly={locked || mySide !== 'a'}
-                        value={clauseDrafts[`${clause.id}:a`] ?? clause.positionA}
-                        onChange={e => setClauseDrafts(previous => ({ ...previous, [`${clause.id}:a`]: e.target.value }))}
-                        onBlur={() => void saveClausePosition(clause.id, 'a')}
-                      />
-                    </label>
-                    <label>
-                      {validResolution ? 'Original responding position' : 'Responding party'}
-                      <textarea
-                        rows={4}
-                        readOnly={locked || mySide !== 'b'}
-                        value={clauseDrafts[`${clause.id}:b`] ?? clause.positionB}
-                        onChange={e => setClauseDrafts(previous => ({ ...previous, [`${clause.id}:b`]: e.target.value }))}
-                        onBlur={() => void saveClausePosition(clause.id, 'b')}
-                      />
-                    </label>
-                    </div>
-                  </details>
-                  {clause.status === 'proposed' && (
-                    <div className="clause-resolution">
-                      <strong>Mediator resolution</strong>
-                      <p>{clause.resolution}</p>
-                      <p className="muted">
-                        Initiating party: {clause.acceptedByA ? 'accepted' : 'awaiting'} · Responding party: {clause.acceptedByB ? 'accepted' : 'awaiting'}
-                      </p>
-                      {!locked && mySide && (
-                        <div className="row">
-                          <button
-                            type="button"
-                            className="btn ok micro"
-                            disabled={mySide === 'a' ? clause.acceptedByA : clause.acceptedByB}
-                            onClick={async () => {
-                              try { await acceptClauseResolution({ clauseId: clause.id }); }
-                              catch (err) { setError(err instanceof Error ? err.message : 'Could not accept clause'); }
-                            }}
-                          >
-                            {(mySide === 'a' ? clause.acceptedByA : clause.acceptedByB) ? 'Accepted by you' : 'Accept this clause'}
-                          </button>
-                        </div>
-                      )}
-                      {!locked && mySide && (
-                        <div className="clause-resolution-input">
-                          <label>
-                            Suggest better wording
-                            <textarea
-                              rows={3}
-                              value={clauseDrafts[`${clause.id}:resolution`] ?? ''}
-                              onChange={e => setClauseDrafts(previous => ({ ...previous, [`${clause.id}:resolution`]: e.target.value }))}
-                              placeholder="Replace the proposed resolution with wording you can accept."
-                            />
-                          </label>
-                          <button
-                            type="button"
-                            className="btn ghost micro"
-                            disabled={!clauseDrafts[`${clause.id}:resolution`]?.trim()}
-                            onClick={async () => {
-                              try { await setClauseResolution({ clauseId: clause.id, resolution: clauseDrafts[`${clause.id}:resolution`] ?? '' }); }
-                              catch (err) { setError(err instanceof Error ? err.message : 'Could not replace clause resolution'); }
-                            }}
-                          >
-                            Propose replacement
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                  {clause.status === 'resolved' && !validResolution && !locked && mySide && (
-                    <div className="clause-resolution-input">
-                      <label>
-                        Replace clause wording
-                        <textarea
-                          rows={3}
-                          value={clauseDrafts[`${clause.id}:resolution`] ?? ''}
-                          onChange={e => setClauseDrafts(previous => ({ ...previous, [`${clause.id}:resolution`]: e.target.value }))}
-                          placeholder="Enter the complete clause wording."
-                        />
-                      </label>
-                      <button type="button" className="btn ghost micro" disabled={!clauseDrafts[`${clause.id}:resolution`]?.trim()} onClick={async () => {
-                        try { await setClauseResolution({ clauseId: clause.id, resolution: clauseDrafts[`${clause.id}:resolution`] ?? '' }); }
-                        catch (err) { setError(err instanceof Error ? err.message : 'Could not replace clause wording'); }
-                      }}>Propose replacement</button>
-                    </div>
-                  )}
-                  {conflict && !locked && mySide && (
-                    <div className="clause-resolution-input">
-                      <label>
-                        Propose the Clause
-                        <textarea
-                          rows={3}
-                          placeholder="Write a compromise clause or wait for the mediator."
-                          onChange={e => setClauseDrafts(previous => ({ ...previous, [`${clause.id}:resolution`]: e.target.value }))}
-                        />
-                      </label>
-                      <button type="button" className="btn ghost micro" disabled={!clauseDrafts[`${clause.id}:resolution`]?.trim()} onClick={async () => {
-                        try { await setClauseResolution({ clauseId: clause.id, resolution: clauseDrafts[`${clause.id}:resolution`] ?? '' }); }
-                        catch (err) { setError(err instanceof Error ? err.message : 'Could not propose resolution'); }
-                      }}>Propose resolution</button>
-                    </div>
-                  )}
-                </article>
-              );
-            })}
-          </section>
+
+        {conflict && !locked && (
+          <div className="mediator-alert">
+            <strong>Another revision arrived while you were editing.</strong>
+            <p>Reload the current agreement before saving to avoid overwriting the other party.</p>
+            <button type="button" className="btn ghost micro" onClick={() => { setDocumentDirty(false); setConflict(false); }}>Reload current agreement</button>
+          </div>
         )}
-        {locked ? (
-          <>
-            <div className="locked-terms-block">
-              <span className="term-lock-label">Locked negotiated terms</span>
-              <pre>{document?.lockedTerms || extractClauses(draft)}</pre>
-            </div>
-            <div className="locked-terms-block">
-              <span className="term-lock-label">Resolved clauses</span>
-              <pre>{clausesRows.map(clause => `${clause.title}: ${clause.resolution || clause.positionA}`).join('\n') || document?.clauses || 'No clauses recorded.'}</pre>
-            </div>
-          </>
-        ) : (
-          <label>
-            Working agreement and clauses
+
+        <label className="agreement-editor">
+          {locked ? 'Locked rental agreement' : 'Shared rental agreement'}
+          {locked ? (
+            <pre className="agreement-document-preview">{document.content}</pre>
+          ) : (
             <textarea
-              rows={24}
-              value={draft}
-              onChange={e => { setDraft(e.target.value); setDirty(true); }}
-              aria-label="Agreement draft"
+              rows={36}
+              readOnly={conflict}
+              value={documentDraft}
+              onChange={event => { setDocumentDraft(event.target.value); setDocumentDirty(true); }}
+              onBlur={() => void saveDocument()}
+              aria-label="Shared rental agreement"
             />
-          </label>
+          )}
+        </label>
+        {!locked && documentDirty && <small className="live-update">Changes save when you leave the agreement editor.</small>}
+
+        {!locked && (
+          <div className="row">
+            <button type="button" className="btn" disabled={!isActive || drafting || busy !== null || conflict || documentDirty} onClick={() => void generateDraft()}>
+              {drafting ? 'Generating full agreement…' : 'Update full agreement with AI'}
+            </button>
+            <button type="button" className="btn ok" disabled={!isActive || busy !== null || conflict || documentDirty || Boolean(mineAccepted) || documentDraft.trim().length < 500} onClick={() => void accept()}>
+              {mineAccepted ? 'Accepted by you' : 'Accept this revision'}
+            </button>
+          </div>
         )}
-        <p className="muted">Negotiated terms and resolved clauses lock after bilateral acceptance. Before that point, each party can resolve their own clause position.</p>
-        {!locked && dirty && (
-          <button type="button" className="btn" disabled={!isActive || !dirty || saving} onClick={save}>
-            {saving ? 'Saving…' : 'Save draft'}
-          </button>
-        )}
-        {locked && <p className="provider-status">Negotiated terms and resolved clauses are locked. This page is now read-only.</p>}
-        <div className="row">
-          <button type="button" className="btn ghost" onClick={downloadPdf}>Download PDF</button>
-          {/* <button type="button" className="btn ghost" disabled title="Configure Documenso credentials to enable email signing">Send for signature</button> */}
-        </div>
-        {error && <p className="error">{error}</p>}
+        <p className="muted">Initiating party: {document.acceptedByA && document.acceptedRevisionA === document.revision ? 'accepted' : 'awaiting'} · Responding party: {document.acceptedByB && document.acceptedRevisionB === document.revision ? 'accepted' : 'awaiting'}</p>
+        {locked && <p className="provider-status">This revision is locked because both parties accepted it.</p>}
+        <button type="button" className="btn ghost" onClick={downloadPdf}>Download PDF</button>
       </section>
+
+      {pendingDraft && !locked && (
+        <section className="panel stack">
+          <div className="row" style={{ justifyContent: 'space-between' }}>
+            <div>
+              <h2>AI agreement draft</h2>
+              <p className="muted">Based on revision {String(pendingDraft.baseRevision)} · {pendingDraft.summary}</p>
+            </div>
+            <span className="tag pending">Review before applying</span>
+          </div>
+          <div className="agreement-diff" aria-label="Agreement changes">
+            <div className="diff-legend">
+              <span><i className="diff-swatch removed" /> Removed</span>
+              <span><i className="diff-swatch added" /> Added</span>
+            </div>
+            <div className="diff-code" role="document">
+              {agreementDiff.map((line, index) => (
+                <div className={`diff-line ${line.type}`} key={`${line.type}-${index}`}>
+                  <span className="diff-marker" aria-hidden="true">{line.type === 'remove' ? '-' : line.type === 'add' ? '+' : ' '}</span>
+                  <code>{line.text || ' '}</code>
+                </div>
+              ))}
+            </div>
+          </div>
+          <details>
+            <summary>Generated sections ({draftSections.length})</summary>
+            <div className="stack agreement-section-list">
+              {draftSections.map(section => <div key={section.id}><strong>{section.title}</strong><p>{section.body}</p></div>)}
+            </div>
+          </details>
+          <button type="button" className="btn" disabled={busy !== null || conflict || documentDirty} onClick={() => void applyDraft()}>Apply full AI agreement to shared document</button>
+        </section>
+      )}
+
+      <section className="panel stack">
+        <h2>Version history</h2>
+        {revisions.map(revision => (
+          <details className="history-proposal" key={String(revision.id)}>
+            <summary>Revision {String(revision.revision)} · {revision.source} · {formatTime(revision.changedAt.microsSinceUnixEpoch)}</summary>
+            <p>{revision.summary}</p>
+            {!locked && revision.revision !== document.revision && (
+              <button type="button" className="btn ghost micro" disabled={busy !== null || conflict || documentDirty} onClick={() => void restoreRevision(revision.id)}>Restore as new revision</button>
+            )}
+          </details>
+        ))}
+      </section>
+
+      {error && <p className="error">{error}</p>}
     </main>
   );
 }

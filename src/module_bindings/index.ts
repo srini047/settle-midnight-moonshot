@@ -34,11 +34,13 @@ import {
 } from "spacetimedb";
 
 // Import all reducer arg schemas
+import AcceptAgreementRevisionReducer from "./accept_agreement_revision_reducer";
 import AcceptClauseResolutionReducer from "./accept_clause_resolution_reducer";
 import AcceptCurrentTermsReducer from "./accept_current_terms_reducer";
 import AcceptOfferReducer from "./accept_offer_reducer";
 import AcceptProposalReducer from "./accept_proposal_reducer";
 import AddSupportDocumentReducer from "./add_support_document_reducer";
+import ApplyAgreementDraftReducer from "./apply_agreement_draft_reducer";
 import ConfirmTermDefinitionsReducer from "./confirm_term_definitions_reducer";
 import CounterOfferReducer from "./counter_offer_reducer";
 import CreateNegotiationReducer from "./create_negotiation_reducer";
@@ -47,6 +49,8 @@ import JoinNegotiationReducer from "./join_negotiation_reducer";
 import MakeOfferReducer from "./make_offer_reducer";
 import RejectOfferReducer from "./reject_offer_reducer";
 import RejectProposalReducer from "./reject_proposal_reducer";
+import RestoreAgreementRevisionReducer from "./restore_agreement_revision_reducer";
+import SaveAgreementDraftReducer from "./save_agreement_draft_reducer";
 import SendMediatorMessageReducer from "./send_mediator_message_reducer";
 import SetClauseResolutionReducer from "./set_clause_resolution_reducer";
 import SetPartyContextReducer from "./set_party_context_reducer";
@@ -55,6 +59,7 @@ import SetPositionReducer from "./set_position_reducer";
 import SetPresenceReducer from "./set_presence_reducer";
 import SetReasonReducer from "./set_reason_reducer";
 import SubmitAgentProposalReducer from "./submit_agent_proposal_reducer";
+import UpdateAgreementClauseReducer from "./update_agreement_clause_reducer";
 import UpdateAgreementClausesReducer from "./update_agreement_clauses_reducer";
 import UpdateAgreementDocumentReducer from "./update_agreement_document_reducer";
 import UpdateClausePositionReducer from "./update_clause_position_reducer";
@@ -65,6 +70,8 @@ import UpdateClausePositionReducer from "./update_clause_position_reducer";
 import AgentProposalRow from "./agent_proposal_table";
 import AgreementClauseRow from "./agreement_clause_table";
 import AgreementDocumentRow from "./agreement_document_table";
+import AgreementDraftRow from "./agreement_draft_table";
+import AgreementRevisionRow from "./agreement_revision_table";
 import EventRow from "./event_table";
 import MediatorMessageRow from "./mediator_message_table";
 import NegotiationRow from "./negotiation_table";
@@ -119,6 +126,31 @@ const tablesSchema = __schema({
       { name: 'agreement_document_negotiation_id_key', constraint: 'unique', columns: ['negotiationId'] },
     ],
   }, AgreementDocumentRow),
+  agreementDraft: __table({
+    name: 'agreement_draft',
+    indexes: [
+      { accessor: 'negotiationId', name: 'agreement_draft_negotiation_id_idx_btree', algorithm: 'btree', columns: [
+        'negotiationId',
+      ] },
+    ],
+    constraints: [
+      { name: 'agreement_draft_negotiation_id_key', constraint: 'unique', columns: ['negotiationId'] },
+    ],
+  }, AgreementDraftRow),
+  agreementRevision: __table({
+    name: 'agreement_revision',
+    indexes: [
+      { accessor: 'id', name: 'agreement_revision_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+      { accessor: 'by_negotiation', name: 'agreement_revision_negotiation_id_idx_btree', algorithm: 'btree', columns: [
+        'negotiationId',
+      ] },
+    ],
+    constraints: [
+      { name: 'agreement_revision_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, AgreementRevisionRow),
   event: __table({
     name: 'event',
     indexes: [
@@ -264,11 +296,13 @@ const tablesSchema = __schema({
 
 /** The schema information for all reducers in this module. This is defined the same way as the reducers would have been defined in the server, except the body of the reducer is omitted in code generation. */
 const reducersSchema = __reducers(
+  __reducerSchema("accept_agreement_revision", AcceptAgreementRevisionReducer),
   __reducerSchema("accept_clause_resolution", AcceptClauseResolutionReducer),
   __reducerSchema("accept_current_terms", AcceptCurrentTermsReducer),
   __reducerSchema("accept_offer", AcceptOfferReducer),
   __reducerSchema("accept_proposal", AcceptProposalReducer),
   __reducerSchema("add_support_document", AddSupportDocumentReducer),
+  __reducerSchema("apply_agreement_draft", ApplyAgreementDraftReducer),
   __reducerSchema("confirm_term_definitions", ConfirmTermDefinitionsReducer),
   __reducerSchema("counter_offer", CounterOfferReducer),
   __reducerSchema("create_negotiation", CreateNegotiationReducer),
@@ -277,6 +311,8 @@ const reducersSchema = __reducers(
   __reducerSchema("make_offer", MakeOfferReducer),
   __reducerSchema("reject_offer", RejectOfferReducer),
   __reducerSchema("reject_proposal", RejectProposalReducer),
+  __reducerSchema("restore_agreement_revision", RestoreAgreementRevisionReducer),
+  __reducerSchema("save_agreement_draft", SaveAgreementDraftReducer),
   __reducerSchema("send_mediator_message", SendMediatorMessageReducer),
   __reducerSchema("set_clause_resolution", SetClauseResolutionReducer),
   __reducerSchema("set_party_context", SetPartyContextReducer),
@@ -285,6 +321,7 @@ const reducersSchema = __reducers(
   __reducerSchema("set_presence", SetPresenceReducer),
   __reducerSchema("set_reason", SetReasonReducer),
   __reducerSchema("submit_agent_proposal", SubmitAgentProposalReducer),
+  __reducerSchema("update_agreement_clause", UpdateAgreementClauseReducer),
   __reducerSchema("update_agreement_clauses", UpdateAgreementClausesReducer),
   __reducerSchema("update_agreement_document", UpdateAgreementDocumentReducer),
   __reducerSchema("update_clause_position", UpdateClausePositionReducer),
@@ -302,6 +339,10 @@ type __SchemaWithTableAccessorAliases = Omit<typeof tablesSchema.schemaType, "ta
     readonly "agreement_clause": Omit<typeof tablesSchema.schemaType.tables["agreementClause"], "accessorName"> & { readonly accessorName: "agreement_clause" };
     /** @deprecated Use `agreementDocument` instead. This alias will be removed in the next major version. */
     readonly "agreement_document": Omit<typeof tablesSchema.schemaType.tables["agreementDocument"], "accessorName"> & { readonly accessorName: "agreement_document" };
+    /** @deprecated Use `agreementDraft` instead. This alias will be removed in the next major version. */
+    readonly "agreement_draft": Omit<typeof tablesSchema.schemaType.tables["agreementDraft"], "accessorName"> & { readonly accessorName: "agreement_draft" };
+    /** @deprecated Use `agreementRevision` instead. This alias will be removed in the next major version. */
+    readonly "agreement_revision": Omit<typeof tablesSchema.schemaType.tables["agreementRevision"], "accessorName"> & { readonly accessorName: "agreement_revision" };
     /** @deprecated Use `mediatorMessage` instead. This alias will be removed in the next major version. */
     readonly "mediator_message": Omit<typeof tablesSchema.schemaType.tables["mediatorMessage"], "accessorName"> & { readonly accessorName: "mediator_message" };
     /** @deprecated Use `offerTerm` instead. This alias will be removed in the next major version. */
@@ -329,6 +370,8 @@ const tableAccessorAliases = {
   "agent_proposal": "agentProposal",
   "agreement_clause": "agreementClause",
   "agreement_document": "agreementDocument",
+  "agreement_draft": "agreementDraft",
+  "agreement_revision": "agreementRevision",
   "mediator_message": "mediatorMessage",
   "offer_term": "offerTerm",
   "support_document": "supportDocument",
@@ -358,6 +401,10 @@ export type DbView = __DbViewBase & {
   readonly "agreement_clause": __DbViewBase["agreementClause"];
   /** @deprecated Use `agreementDocument` instead. This alias will be removed in the next major version. */
   readonly "agreement_document": __DbViewBase["agreementDocument"];
+  /** @deprecated Use `agreementDraft` instead. This alias will be removed in the next major version. */
+  readonly "agreement_draft": __DbViewBase["agreementDraft"];
+  /** @deprecated Use `agreementRevision` instead. This alias will be removed in the next major version. */
+  readonly "agreement_revision": __DbViewBase["agreementRevision"];
   /** @deprecated Use `mediatorMessage` instead. This alias will be removed in the next major version. */
   readonly "mediator_message": __DbViewBase["mediatorMessage"];
   /** @deprecated Use `offerTerm` instead. This alias will be removed in the next major version. */
@@ -374,6 +421,10 @@ export type Tables = __TablesBase & {
   readonly "agreement_clause": __TablesBase["agreementClause"];
   /** @deprecated Use `agreementDocument` instead. This alias will be removed in the next major version. */
   readonly "agreement_document": __TablesBase["agreementDocument"];
+  /** @deprecated Use `agreementDraft` instead. This alias will be removed in the next major version. */
+  readonly "agreement_draft": __TablesBase["agreementDraft"];
+  /** @deprecated Use `agreementRevision` instead. This alias will be removed in the next major version. */
+  readonly "agreement_revision": __TablesBase["agreementRevision"];
   /** @deprecated Use `mediatorMessage` instead. This alias will be removed in the next major version. */
   readonly "mediator_message": __TablesBase["mediatorMessage"];
   /** @deprecated Use `offerTerm` instead. This alias will be removed in the next major version. */

@@ -1,89 +1,114 @@
-# Settle — shared negotiation table
+# Settle
 
-For tenants and landlords who cannot agree, Settle turns a rental dispute into a
-shared, researched negotiation workspace. Built on
-[SpacetimeDB](https://spacetimedb.com) (maincloud) with a mobile-first Next.js UI.
+Rental negotiation agent for tenants and landlords.
 
-## Flow
+## Demo
+[Watch the Settle demo on YouTube](https://youtu.be/d2XCockR2Pg)
 
-1. **Describe the rental** — provide the state, city, property type, matter title, and
-   the situation in plain language. Settle can extract suggested rental terms for review.
-   Confirm the opening terms and become the initiating party.
-2. **Share the link** (or code) — the other party joins as the responding party on their own device.
-3. **Negotiate live** — each party adds their context and opening positions. Opening
-   values are preserved; later changes happen through proposals. Make offers, counter,
-   accept, or reject. A gap meter shows how close both sides are.
-4. **Ask the mediator** — Settle researches official Indian legal sources, current local
-   market evidence, and lived rental experiences through Tavily before sending the
-   snapshot to OpenAI. The response includes citations and can caution, block, or require
-   human review instead of blindly proposing terms.
-5. **Resolve and execute** — manual and mediator proposals are bilateral. Clauses are
-   compared side by side like a merge conflict. Once both parties accept the terms and
-   resolved clauses, Settle generates a PDF agreement.
+Settle helps both parties:
+
+- Share rental context and supporting files.
+- Extract and review opening rental terms.
+- Negotiate live in a shared room.
+- Make and accept bilateral proposals.
+- Compare conflicting clauses.
+- Ask a mediator for researched guidance.
+- Review legal, market, and lived-experience sources.
+- Generate a final rental agreement PDF.
+
+## User Flow
+
+1. The initiating party creates a rental matter.
+2. Select the Indian state, district, and property type.
+3. Describe the rental situation in plain language.
+4. Optionally attach PDF, DOCX, TXT, or image files.
+5. Review terms extracted from the context.
+6. Share the room link with the responding party.
+7. The responding party confirms their identity and adds context.
+8. Both parties make, review, reject, or accept proposals.
+9. Resolve clause differences in the agreement workspace.
+10. Ask the mediator for researched guidance and citations.
+11. Both parties accept the final terms and clauses.
+12. Download the generated agreement PDF.
+
+## Mediator
+
+The mediator uses:
+
+- Official Indian legal sources.
+- Current local rental-market evidence.
+- Lived tenant and landlord experiences.
+- Shared rental context and uploaded files.
+- The full proposal and clause history.
+
+The mediator can:
+
+- Proceed with a recommendation.
+- Add a caution.
+- Block an out-of-scope or unsafe request.
+- Require human legal review.
+- Explain its reasoning with visible citations.
+
+Settle is not a substitute for legal representation.
 
 ## Architecture
 
-```mermaid
-flowchart LR
-  PartyA[Initiating party tab] -->|reducers| STD[SpacetimeDB maincloud]
-  PartyB[Responding party tab] -->|reducers| STD
-  STD -->|subscriptions| PartyA
-  STD -->|subscriptions| PartyB
-  Room[Room UI] -->|snapshot| Mediate["/api/mediate"]
-  Mediate -->|legal + market + lived research| Tavily[Tavily]
-  Mediate -->|researched snapshot| OpenAI[OpenAI]
-  Mediate -->|JSON proposal| Room
-  Room -->|submit_agent_proposal| STD
-  Room -->|shared document| Agreement[Live agreement draft]
-```
+- Frontend: Next.js, React, mobile-first UI.
+- Database: SpacetimeDB maincloud.
+- AI mediator: OpenAI.
+- External research: Tavily.
+- Agreement output: PDF download.
+- Realtime state: SpacetimeDB subscriptions and reducers.
 
-- **Source of truth:** SpacetimeDB tables (`negotiation`, `party`, `term`, `position`,
-  `offer`, `offer_term`, `agent_proposal`, `agreement_clause`, `event`, `presence`). Reducers are the only
-  writers; clients read via subscriptions.
-- **Env** (`.env.local` — AI keys live in `.env`, gitignored):
+## Environment
 
-  ```bash
-  SPACETIMEDB_DB_NAME=settle
-  SPACETIMEDB_HOST=wss://maincloud.spacetimedb.com
-   OPENAI_API_KEY=sk-...            # mediator brain (in .env)
-   TAVILY_API_KEY=tvly-...          # external research (in .env)
-  ```
-
-## Develop
+Create `.env.local` or `.env`:
 
 ```bash
-spacetime login                 # once, maincloud identity
+SPACETIMEDB_DB_NAME=settle
+SPACETIMEDB_HOST=wss://maincloud.spacetimedb.com
+OPENAI_API_KEY=your-openai-key
+TAVILY_API_KEY=your-tavily-key
+```
+
+## Development
+
+```bash
 npm install
-
-npm run spacetime:generate      # regenerate client bindings from the module
-npm run spacetime:publish       # publish the module to maincloud ("settle")
-
-npm run dev                     # Next.js app on http://localhost:3000
+npm run dev
 ```
 
-Publishing wipes local-only data as needed; use `spacetime publish --delete-data=always`
-only when a deliberate schema reset is required.
+Open:
 
-## Project layout
-
-```
-├── spacetimedb/src/index.ts    # SpacetimeDB module: tables + reducers
-├── app/
-│   ├── page.tsx                # landing: create room / join with code
-│   ├── room/[code]/page.tsx    # room: term sheet, offers, mediator, presence
-│   ├── api/
-│   │   └── mediate/route.ts    # OpenAI mediator (JSON proposal)
-│   └── providers.tsx           # SpacetimeDB React provider + token persistence
-├── lib/
-│   ├── spacetimedb.ts          # maincloud URI / db name env helper
-└── src/module_bindings/        # auto-generated client bindings
+```text
+http://localhost:3000
 ```
 
-## Two-tab demo path
+## SpacetimeDB
 
-1. Open `/` in tab A → create a room → copy the join link.
-2. Open the link in an incognito tab → join as the responding party.
-3. Add the responder's context and opening positions.
-4. Make a proposal in one tab → accept/counter/reject from either side.
-5. Ask the mediator → review its research decision and citations on both tabs.
-6. Resolve clause differences, accept the latest terms from both tabs, and download the PDF.
+```bash
+spacetime login
+npm run spacetime:generate
+npm run spacetime:publish
+```
+
+## Verification
+
+```bash
+npm run typecheck
+npm run build
+```
+
+## Demo
+
+Demo recording: [Watch the Settle demo on YouTube](https://youtu.be/d2XCockR2Pg)
+
+Suggested two-tab demo:
+
+1. Create a rental matter in tab one.
+2. Join the room from tab two.
+3. Add responder context and opening values.
+4. Make and accept a proposal from both sides.
+5. Ask the mediator and review citations.
+6. Resolve a clause difference.
+7. Accept the final terms and download the PDF.

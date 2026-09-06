@@ -52,8 +52,39 @@ export const AgreementDocument = __t.object("AgreementDocument", {
   updatedAt: __t.timestamp(),
   lockedTerms: __t.string(),
   clauses: __t.string(),
+  revision: __t.u64(),
+  acceptedByA: __t.bool(),
+  acceptedByB: __t.bool(),
+  acceptedRevisionA: __t.u64(),
+  acceptedRevisionB: __t.u64(),
 });
 export type AgreementDocument = __Infer<typeof AgreementDocument>;
+
+export const AgreementDraft = __t.object("AgreementDraft", {
+  negotiationId: __t.u64(),
+  baseRevision: __t.u64(),
+  content: __t.string(),
+  clauses: __t.string(),
+  summary: __t.string(),
+  createdBy: __t.identity(),
+  createdAt: __t.timestamp(),
+  status: __t.string(),
+});
+export type AgreementDraft = __Infer<typeof AgreementDraft>;
+
+export const AgreementRevision = __t.object("AgreementRevision", {
+  id: __t.u64(),
+  negotiationId: __t.u64(),
+  revision: __t.u64(),
+  content: __t.string(),
+  clauses: __t.string(),
+  changedBy: __t.identity(),
+  changedAt: __t.timestamp(),
+  source: __t.string(),
+  baseRevision: __t.u64(),
+  summary: __t.string(),
+});
+export type AgreementRevision = __Infer<typeof AgreementRevision>;
 
 export const Event = __t.object("Event", {
   id: __t.u64(),

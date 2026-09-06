@@ -13,4 +13,5 @@ import {
 export default {
   negotiationId: __t.u64(),
   content: __t.string(),
+  expectedRevision: __t.u64(),
 };

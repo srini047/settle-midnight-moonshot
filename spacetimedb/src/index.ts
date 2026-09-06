@@ -33,6 +33,11 @@ const SupportDocumentSeed = t.object('SupportDocumentSeed', {
   data: t.array(t.u8()),
 });
 
+const AgreementClauseDraft = t.object('AgreementClauseDraft', {
+  clauseId: t.u64(),
+  text: t.string(),
+});
+
 const negotiation = table(
   { name: 'negotiation', public: true },
   {
@@ -211,6 +216,11 @@ const agreement_document = table(
     updatedAt: t.timestamp(),
     lockedTerms: t.string().default(''),
     clauses: t.string().default(''),
+    revision: t.u64().default(1n),
+    acceptedByA: t.bool().default(false),
+    acceptedByB: t.bool().default(false),
+    acceptedRevisionA: t.u64().default(0n),
+    acceptedRevisionB: t.u64().default(0n),
   }
 );
 
@@ -232,6 +242,40 @@ const agreement_clause = table(
     acceptedByB: t.bool(),
     sortOrder: t.u32(),
     updatedAt: t.timestamp(),
+  }
+);
+
+const agreement_revision = table(
+  {
+    name: 'agreement_revision',
+    public: true,
+    indexes: [{ accessor: 'by_negotiation', algorithm: 'btree', columns: ['negotiationId'] }],
+  },
+  {
+    id: t.u64().primaryKey().autoInc(),
+    negotiationId: t.u64(),
+    revision: t.u64(),
+    content: t.string(),
+    clauses: t.string(),
+    changedBy: t.identity(),
+    changedAt: t.timestamp(),
+    source: t.string(),
+    baseRevision: t.u64(),
+    summary: t.string(),
+  }
+);
+
+const agreement_draft = table(
+  { name: 'agreement_draft', public: true },
+  {
+    negotiationId: t.u64().primaryKey(),
+    baseRevision: t.u64(),
+    content: t.string(),
+    clauses: t.string(),
+    summary: t.string(),
+    createdBy: t.identity(),
+    createdAt: t.timestamp(),
+    status: t.string(),
   }
 );
 
@@ -292,6 +336,8 @@ const spacetimedb = schema({
   mediator_message,
   agreement_document,
   agreement_clause,
+  agreement_revision,
+  agreement_draft,
   support_document,
   event,
   presence,
@@ -397,32 +443,98 @@ function currentResolvedClauses(ctx: Ctx, negotiationId: bigint): string {
     .join('\n');
 }
 
+function currentClauseSnapshot(ctx: Ctx, negotiationId: bigint): string {
+  return JSON.stringify(
+    [...ctx.db.agreement_clause.by_negotiation.filter(negotiationId)]
+      .sort((a, b) => a.sortOrder - b.sortOrder)
+      .map(clause => ({
+        clauseId: String(clause.id),
+        title: clause.title,
+        text: clause.resolution,
+      }))
+  );
+}
+
+function renderAgreementContent(ctx: Ctx, negotiationId: bigint): string {
+  const negotiation = ctx.db.negotiation.id.find(negotiationId);
+  const parties = partiesFor(ctx, negotiationId);
+  const partyA = parties.find(p => p.side === 'a');
+  const partyB = parties.find(p => p.side === 'b');
+  const clauses = [...ctx.db.agreement_clause.by_negotiation.filter(negotiationId)]
+    .sort((a, b) => a.sortOrder - b.sortOrder)
+    .flatMap((clause, index) => [`${index + 1}. ${clause.title}`, clause.resolution.trim() || '[Draft clause pending]']);
+  return [
+    currentLockedTerms(ctx, negotiationId),
+    '',
+    'COMMON CLAUSES',
+    ...clauses,
+    '',
+    'EXECUTION',
+    `Initiating party (${partyA?.label ?? 'Initiating party'}) signature: ____________________    Date: __________`,
+    `Responding party (${partyB?.label ?? 'Responding party'}) signature: ____________________    Date: __________`,
+    negotiation?.status === 'agreed' ? '' : 'Working draft: this agreement is not final until both parties accept the same revision.',
+  ].join('\n');
+}
+
+function appendAgreementRevision(
+  ctx: Ctx,
+  negotiationId: bigint,
+  revision: bigint,
+  content: string,
+  clauses: string,
+  source: string,
+  baseRevision: bigint,
+  summary: string
+) {
+  ctx.db.agreement_revision.insert({
+    id: 0n,
+    negotiationId,
+    revision,
+    content,
+    clauses,
+    changedBy: ctx.sender,
+    changedAt: ctx.timestamp,
+    source,
+    baseRevision,
+    summary,
+  });
+}
+
 function ensureAgreementDocument(ctx: Ctx, negotiationId: bigint) {
-  if (!ctx.db.agreement_document.negotiationId.find(negotiationId)) {
-    const negotiation = ctx.db.negotiation.id.find(negotiationId);
-    const parties = partiesFor(ctx, negotiationId);
-    const partyA = parties.find(p => p.side === 'a');
-    const partyB = parties.find(p => p.side === 'b');
+  const existing = ctx.db.agreement_document.negotiationId.find(negotiationId);
+  if (existing) {
+    if ([...ctx.db.agreement_revision.by_negotiation.filter(negotiationId)].length === 0) {
+      appendAgreementRevision(
+        ctx,
+        negotiationId,
+        existing.revision,
+        existing.content,
+        existing.clauses.trim().startsWith('[') ? existing.clauses : currentClauseSnapshot(ctx, negotiationId),
+        'migration',
+        existing.revision,
+        'Initial agreement revision'
+      );
+    }
+    return;
+  }
+  {
     const lockedTerms = currentLockedTerms(ctx, negotiationId);
     const clauses = currentResolvedClauses(ctx, negotiationId);
-    const lines = [
-      lockedTerms,
-      '',
-      'RESOLVED CLAUSES',
-      clauses,
-      '',
-      'EXECUTION',
-      `Initiating party (${partyA?.label ?? 'Initiating party'}) signature: ____________________    Date: __________`,
-      `Responding party (${partyB?.label ?? 'Responding party'}) signature: ____________________    Date: __________`,
-    ];
+    const content = renderAgreementContent(ctx, negotiationId);
     ctx.db.agreement_document.insert({
       negotiationId,
-      content: lines.join('\n'),
+      content,
       lockedTerms,
       clauses,
       updatedBy: ctx.sender,
       updatedAt: ctx.timestamp,
+      revision: 1n,
+      acceptedByA: false,
+      acceptedByB: false,
+      acceptedRevisionA: 0n,
+      acceptedRevisionB: 0n,
     });
+    appendAgreementRevision(ctx, negotiationId, 1n, content, currentClauseSnapshot(ctx, negotiationId), 'system', 0n, 'Initial agreement revision');
   }
 }
 
@@ -430,6 +542,16 @@ function clearAgreementAcceptance(ctx: Ctx, negotiationId: bigint) {
   const negotiation = ctx.db.negotiation.id.find(negotiationId);
   if (negotiation && (negotiation.acceptedByA || negotiation.acceptedByB)) {
     ctx.db.negotiation.id.update({ ...negotiation, acceptedByA: false, acceptedByB: false });
+  }
+  const document = ctx.db.agreement_document.negotiationId.find(negotiationId);
+  if (document && (document.acceptedByA || document.acceptedByB)) {
+    ctx.db.agreement_document.negotiationId.update({
+      ...document,
+      acceptedByA: false,
+      acceptedByB: false,
+      acceptedRevisionA: 0n,
+      acceptedRevisionB: 0n,
+    });
   }
 }
 
@@ -625,11 +747,18 @@ export const createNegotiation = spacetimedb.reducer(
     });
 
     const defaultClauses = [
-      ['Scope and performance', 'The parties will perform the agreed terms in good faith.'],
-      ['Confidentiality', 'Each party will keep non-public matter information confidential unless disclosure is required by law.'],
-      ['Changes', 'Any amendment must be made in writing and accepted by both parties.'],
-      ['Dispute resolution', 'The parties will first return to Settle to document any disagreement before pursuing other remedies.'],
-      ['Governing law', `This agreement is governed by the laws applicable in ${jurisdictionState.trim()}, India.`],
+      ['Term and possession', 'The tenancy begins on [Commencement date] and continues for [Term]. Possession will be delivered subject to the agreed rental terms.'],
+      ['Rent and payment', 'The tenant will pay the agreed rent of [Rent amount] on or before [Due date] by [Payment method]. Any late payment consequence must be agreed in writing and comply with applicable law.'],
+      ['Security deposit', 'The security deposit is [Deposit amount]. Lawful deductions, if any, will be explained to the tenant and the balance will be returned within the agreed period after handover.'],
+      ['Utilities and maintenance', 'The parties will pay utilities and perform maintenance responsibilities as recorded in the agreed rental terms. Each party will promptly notify the other of material issues.'],
+      ['Permitted use and occupancy', 'The premises will be used only for lawful residential or commercial purposes agreed by the parties. Occupancy, pets, and house rules will follow the agreed terms.'],
+      ['Repairs and alterations', 'The tenant will not make material alterations without written consent. Each party will handle repairs assigned to it under the agreed terms and applicable law.'],
+      ['Inspection and access', 'The landlord may access the premises for lawful inspection, repairs, or emergencies with reasonable notice except where immediate access is necessary to prevent harm.'],
+      ['Subletting and assignment', 'The tenant will not sublet, license, or assign the premises without the consent required by the agreed terms and applicable law.'],
+      ['Default, termination, and handover', 'A party will give the agreed notice of termination and a reasonable opportunity to cure a remediable default. On termination, the tenant will return possession and keys subject to a documented handover.'],
+      ['Dispute resolution', 'The parties will first return to Settle to document any disagreement and attempt a good-faith resolution before pursuing other remedies.'],
+      ['Governing law and registration', `This agreement is subject to the laws applicable in ${jurisdictionState.trim()}, India. The parties will address stamp duty and registration obligations that apply to the premises and term.`],
+      ['General provisions and signatures', 'Any amendment must be made in writing and accepted by both parties. The parties will sign below after reviewing the complete agreement.'],
     ];
     defaultClauses.forEach(([title, text], index) => {
       ctx.db.agreement_clause.insert({
@@ -1185,6 +1314,10 @@ export const finalizeDeal = spacetimedb.reducer(
     if (!neg.definitionsConfirmedByA || !neg.definitionsConfirmedByB) {
       throw new SenderError('Both parties must confirm the term definitions');
     }
+    const document = ctx.db.agreement_document.negotiationId.find(negotiationId);
+    if (!document || !document.acceptedByA || !document.acceptedByB || document.acceptedRevisionA !== document.revision || document.acceptedRevisionB !== document.revision) {
+      throw new SenderError('Both parties must accept the current agreement revision');
+    }
     ctx.db.negotiation.id.update({ ...neg, status: 'agreed' });
     ensureAgreementDocument(ctx, negotiationId);
     appendEvent(ctx, negotiationId, 'finalized', '{}');
@@ -1199,27 +1332,29 @@ export const acceptCurrentTerms = spacetimedb.reducer(
     if (!neg.definitionsConfirmedByA || !neg.definitionsConfirmedByB) {
       throw new SenderError('Both parties must confirm the term definition');
     }
-    const unresolvedClauses = [...ctx.db.agreement_clause.by_negotiation.filter(negotiationId)]
-      .filter(clause => clause.status !== 'resolved' || clause.resolution.trim().length < 3);
-    if (unresolvedClauses.length > 0) {
-      throw new SenderError('Resolve every clause before accepting the agreement');
+    const document = ctx.db.agreement_document.negotiationId.find(negotiationId);
+    if (!document) throw new SenderError('Open the working agreement before accepting it');
+    if ([...ctx.db.agreement_clause.by_negotiation.filter(negotiationId)].some(clause => clause.resolution.trim().length < 3)) {
+      throw new SenderError('Every clause needs shared wording before accepting the agreement');
     }
-    const acceptedByA = neg.acceptedByA || caller.side === 'a';
-    const acceptedByB = neg.acceptedByB || caller.side === 'b';
-    if (acceptedByA && acceptedByB) {
-      ctx.db.negotiation.id.update({ ...neg, status: 'agreed', acceptedByA, acceptedByB });
-      ensureAgreementDocument(ctx, negotiationId);
-      const document = ctx.db.agreement_document.negotiationId.find(negotiationId);
-      if (document) {
-        const clauses = currentResolvedClauses(ctx, negotiationId);
-        ctx.db.agreement_document.negotiationId.update({
-          ...document,
-          lockedTerms: currentLockedTerms(ctx, negotiationId),
-          clauses,
-        });
-      }
+    const acceptedByA = document.acceptedByA || caller.side === 'a';
+    const acceptedByB = document.acceptedByB || caller.side === 'b';
+    const acceptedRevisionA = caller.side === 'a' ? document.revision : document.acceptedRevisionA;
+    const acceptedRevisionB = caller.side === 'b' ? document.revision : document.acceptedRevisionB;
+    ctx.db.agreement_document.negotiationId.update({
+      ...document,
+      acceptedByA,
+      acceptedByB,
+      acceptedRevisionA,
+      acceptedRevisionB,
+      ...(acceptedByA && acceptedByB ? {
+        lockedTerms: currentLockedTerms(ctx, negotiationId),
+      } : {}),
+    });
+    if (acceptedByA && acceptedByB && acceptedRevisionA === document.revision && acceptedRevisionB === document.revision) {
+      ctx.db.negotiation.id.update({ ...neg, status: 'agreed', acceptedByA: true, acceptedByB: true });
     } else {
-      ctx.db.negotiation.id.update({ ...neg, status: 'proposed', acceptedByA, acceptedByB });
+      ctx.db.negotiation.id.update({ ...neg, status: 'proposed', acceptedByA: false, acceptedByB: false });
     }
     appendEvent(ctx, negotiationId, 'terms_accepted', JSON.stringify({ side: caller.side }));
   }
@@ -1319,36 +1454,211 @@ export const setPartyContext = spacetimedb.reducer(
     const caller = findCallerParty(ctx, negotiationId);
     if (context.length > 100000) throw new SenderError('Context is too large');
     if (caller.side !== 'b') throw new SenderError('Only the responding party can update this context');
+    clearAgreementAcceptance(ctx, negotiationId);
     ctx.db.negotiation.id.update({ ...negotiation, responderContext: context.trim() });
     appendEvent(ctx, negotiationId, 'responder_context_updated', '{}');
   }
 );
 
 export const updateAgreementDocument = spacetimedb.reducer(
-  { negotiationId: t.u64(), content: t.string() },
-  (ctx, { negotiationId, content }) => {
+  { negotiationId: t.u64(), content: t.string(), expectedRevision: t.u64() },
+  (ctx, { negotiationId, content, expectedRevision }) => {
     const neg = requireNegotiation(ctx, negotiationId);
     if (neg.status === 'agreed') throw new SenderError('Agreement is locked after both parties agree');
     findCallerParty(ctx, negotiationId);
     if (content.length > 100000) throw new SenderError('Document is too large');
+    ensureAgreementDocument(ctx, negotiationId);
     const existing = ctx.db.agreement_document.negotiationId.find(negotiationId);
-    if (existing) {
+    if (!existing) throw new SenderError('Agreement document not found');
+    if (existing.revision !== expectedRevision) throw new SenderError('Agreement changed remotely. Reload before saving.');
+    clearAgreementAcceptance(ctx, negotiationId);
+    const nextRevision = existing.revision + 1n;
+    ctx.db.agreement_document.negotiationId.update({
+      ...existing,
+      content,
+      updatedBy: ctx.sender,
+      updatedAt: ctx.timestamp,
+      revision: nextRevision,
+      acceptedByA: false,
+      acceptedByB: false,
+      acceptedRevisionA: 0n,
+      acceptedRevisionB: 0n,
+    });
+    appendAgreementRevision(ctx, negotiationId, nextRevision, content, existing.clauses, 'manual', existing.revision, 'Agreement text updated');
+    appendEvent(ctx, negotiationId, 'agreement_revision_created', JSON.stringify({ revision: String(nextRevision), source: 'manual' }));
+  }
+);
+
+export const updateAgreementClause = spacetimedb.reducer(
+  { clauseId: t.u64(), text: t.string(), expectedRevision: t.u64() },
+  (ctx, { clauseId, text, expectedRevision }) => {
+    const clause = ctx.db.agreement_clause.id.find(clauseId);
+    if (!clause) throw new SenderError('Clause not found');
+    const neg = requireNegotiation(ctx, clause.negotiationId);
+    if (neg.status === 'agreed') throw new SenderError('Agreement is locked');
+    findCallerParty(ctx, clause.negotiationId);
+    const document = ctx.db.agreement_document.negotiationId.find(clause.negotiationId);
+    if (!document) throw new SenderError('Agreement document not found');
+    if (document.revision !== expectedRevision) throw new SenderError('Agreement changed remotely. Reload before saving.');
+    const trimmed = text.trim();
+    if (trimmed.length > 20000) throw new SenderError('Clause is too large');
+    clearAgreementAcceptance(ctx, clause.negotiationId);
+    ctx.db.agreement_clause.id.update({
+      ...clause,
+      resolution: trimmed,
+      status: trimmed ? 'resolved' : 'draft',
+      acceptedByA: false,
+      acceptedByB: false,
+      updatedAt: ctx.timestamp,
+    });
+    const nextRevision = document.revision + 1n;
+    const content = renderAgreementContent(ctx, clause.negotiationId);
+    const clauses = currentResolvedClauses(ctx, clause.negotiationId);
+    const snapshot = currentClauseSnapshot(ctx, clause.negotiationId);
+    ctx.db.agreement_document.negotiationId.update({
+      ...document,
+      content,
+      clauses,
+      updatedBy: ctx.sender,
+      updatedAt: ctx.timestamp,
+      revision: nextRevision,
+      acceptedByA: false,
+      acceptedByB: false,
+      acceptedRevisionA: 0n,
+      acceptedRevisionB: 0n,
+    });
+    appendAgreementRevision(ctx, clause.negotiationId, nextRevision, content, snapshot, 'manual', document.revision, `Clause updated: ${clause.title}`);
+    appendEvent(ctx, clause.negotiationId, 'agreement_revision_created', JSON.stringify({ revision: String(nextRevision), source: 'manual', clauseId: String(clauseId) }));
+  }
+);
+
+export const saveAgreementDraft = spacetimedb.reducer(
+  { negotiationId: t.u64(), baseRevision: t.u64(), content: t.string(), clauses: t.string(), summary: t.string() },
+  (ctx, { negotiationId, baseRevision, content, clauses, summary }) => {
+    const neg = requireNegotiation(ctx, negotiationId);
+    if (neg.status === 'agreed') throw new SenderError('Agreement is locked');
+    findCallerParty(ctx, negotiationId);
+    const document = ctx.db.agreement_document.negotiationId.find(negotiationId);
+    if (!document) throw new SenderError('Agreement document not found');
+    if (baseRevision !== document.revision) throw new SenderError('This AI draft is based on an older agreement revision.');
+    if (content.length > 100000 || clauses.length > 100000) throw new SenderError('AI draft is too large');
+    try {
+      const parsed = JSON.parse(clauses) as unknown;
+      if (!Array.isArray(parsed)) throw new Error('not an array');
+    } catch {
+      throw new SenderError('AI draft clauses are invalid');
+    }
+    const existing = ctx.db.agreement_draft.negotiationId.find(negotiationId);
+    const draft = {
+      negotiationId,
+      baseRevision,
+      content,
+      clauses,
+      summary: summary.trim(),
+      createdBy: ctx.sender,
+      createdAt: ctx.timestamp,
+      status: 'pending',
+    };
+    if (existing) ctx.db.agreement_draft.negotiationId.update(draft);
+    else ctx.db.agreement_draft.insert(draft);
+    appendEvent(ctx, negotiationId, 'agreement_draft_created', JSON.stringify({ baseRevision: String(baseRevision) }));
+  }
+);
+
+export const applyAgreementDraft = spacetimedb.reducer(
+  { negotiationId: t.u64(), expectedRevision: t.u64() },
+  (ctx, { negotiationId, expectedRevision }) => {
+    const neg = requireNegotiation(ctx, negotiationId);
+    if (neg.status === 'agreed') throw new SenderError('Agreement is locked');
+    findCallerParty(ctx, negotiationId);
+    const document = ctx.db.agreement_document.negotiationId.find(negotiationId);
+    const draft = ctx.db.agreement_draft.negotiationId.find(negotiationId);
+    if (!document || !draft) throw new SenderError('AI draft not found');
+    if (document.revision !== expectedRevision || draft.baseRevision !== expectedRevision) {
+      throw new SenderError('Agreement changed since this AI draft was generated. Generate a new draft.');
+    }
+    clearAgreementAcceptance(ctx, negotiationId);
+    const nextRevision = document.revision + 1n;
+    const content = draft.content;
+    const clauses = draft.clauses;
+    ctx.db.agreement_document.negotiationId.update({
+      ...document,
+      content,
+      clauses,
+      updatedBy: ctx.sender,
+      updatedAt: ctx.timestamp,
+      revision: nextRevision,
+      acceptedByA: false,
+      acceptedByB: false,
+      acceptedRevisionA: 0n,
+      acceptedRevisionB: 0n,
+    });
+    ctx.db.agreement_draft.negotiationId.update({ ...draft, status: 'applied' });
+    appendAgreementRevision(ctx, negotiationId, nextRevision, content, clauses, 'ai', document.revision, draft.summary || 'AI agreement draft applied');
+    appendEvent(ctx, negotiationId, 'agreement_revision_created', JSON.stringify({ revision: String(nextRevision), source: 'ai' }));
+  }
+);
+
+export const restoreAgreementRevision = spacetimedb.reducer(
+  { negotiationId: t.u64(), revisionId: t.u64(), expectedRevision: t.u64() },
+  (ctx, { negotiationId, revisionId, expectedRevision }) => {
+    const neg = requireNegotiation(ctx, negotiationId);
+    if (neg.status === 'agreed') throw new SenderError('Agreement is locked');
+    findCallerParty(ctx, negotiationId);
+    const document = ctx.db.agreement_document.negotiationId.find(negotiationId);
+    const historical = ctx.db.agreement_revision.id.find(revisionId);
+    if (!document || !historical || historical.negotiationId !== negotiationId) throw new SenderError('Agreement revision not found');
+    if (document.revision !== expectedRevision) throw new SenderError('Agreement changed remotely. Reload before restoring.');
+    clearAgreementAcceptance(ctx, negotiationId);
+    const nextRevision = document.revision + 1n;
+    const content = historical.content;
+    const clauses = historical.clauses;
+    ctx.db.agreement_document.negotiationId.update({
+      ...document,
+      content,
+      clauses,
+      updatedBy: ctx.sender,
+      updatedAt: ctx.timestamp,
+      revision: nextRevision,
+      acceptedByA: false,
+      acceptedByB: false,
+      acceptedRevisionA: 0n,
+      acceptedRevisionB: 0n,
+    });
+    appendAgreementRevision(ctx, negotiationId, nextRevision, content, clauses, 'restore', document.revision, `Restored revision ${historical.revision}`);
+    appendEvent(ctx, negotiationId, 'agreement_revision_created', JSON.stringify({ revision: String(nextRevision), source: 'restore', restoredRevision: String(historical.revision) }));
+  }
+);
+
+export const acceptAgreementRevision = spacetimedb.reducer(
+  { negotiationId: t.u64(), revision: t.u64() },
+  (ctx, { negotiationId, revision }) => {
+    const neg = requireNegotiation(ctx, negotiationId);
+    const caller = findCallerParty(ctx, negotiationId);
+    if (!neg.definitionsConfirmedByA || !neg.definitionsConfirmedByB) throw new SenderError('Both parties must confirm term definitions');
+    const document = ctx.db.agreement_document.negotiationId.find(negotiationId);
+    if (!document || document.revision !== revision) throw new SenderError('Only the current agreement revision can be accepted');
+    const clauses = [...ctx.db.agreement_clause.by_negotiation.filter(negotiationId)];
+    if (clauses.some(clause => clause.resolution.trim().length < 3)) throw new SenderError('Every clause needs shared wording before acceptance');
+    const acceptedByA = document.acceptedByA || caller.side === 'a';
+    const acceptedByB = document.acceptedByB || caller.side === 'b';
+    const nextDocument = {
+      ...document,
+      acceptedByA,
+      acceptedByB,
+      acceptedRevisionA: caller.side === 'a' ? revision : document.acceptedRevisionA,
+      acceptedRevisionB: caller.side === 'b' ? revision : document.acceptedRevisionB,
+    };
+    if (acceptedByA && acceptedByB && nextDocument.acceptedRevisionA === revision && nextDocument.acceptedRevisionB === revision) {
+      ctx.db.negotiation.id.update({ ...neg, status: 'agreed', acceptedByA: true, acceptedByB: true });
       ctx.db.agreement_document.negotiationId.update({
-        ...existing,
-        content,
-        updatedBy: ctx.sender,
-        updatedAt: ctx.timestamp,
+        ...nextDocument,
+        lockedTerms: currentLockedTerms(ctx, negotiationId),
       });
     } else {
-      ctx.db.agreement_document.insert({
-        negotiationId,
-        content,
-        lockedTerms: '',
-        clauses: content,
-        updatedBy: ctx.sender,
-        updatedAt: ctx.timestamp,
-      });
+      ctx.db.agreement_document.negotiationId.update(nextDocument);
     }
+    appendEvent(ctx, negotiationId, 'agreement_revision_accepted', JSON.stringify({ revision: String(revision), side: caller.side }));
   }
 );
 
@@ -1385,6 +1695,7 @@ export const addSupportDocument = spacetimedb.reducer(
     if (!trimmedContent && data.length === 0) throw new SenderError('Document content is required');
     if (trimmedName.length > 200) throw new SenderError('Document name is too long');
     if (trimmedContent.length > 100000 || data.length > 2_000_000) throw new SenderError('Document is larger than the 2 MB limit');
+    clearAgreementAcceptance(ctx, negotiationId);
     ctx.db.support_document.insert({
       id: 0n,
       negotiationId,

@@ -141,3 +141,4 @@ tools/custom-gcl.exe.hash
 spacetime.local.json
 .env
 tsconfig.tsbuildinfo
+.next

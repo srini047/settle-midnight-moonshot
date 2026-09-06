@@ -32,6 +32,11 @@ const EVENT_LABELS: Record<string, string> = {
   agent_proposal: 'Mediator proposal',
   proposal_accepted: 'Proposal accepted',
   proposal_rejected: 'Proposal rejected',
+  agreement_revision_created: 'Agreement revision created',
+  agreement_draft_created: 'AI agreement draft created',
+  agreement_revision_accepted: 'Agreement revision accepted',
+  responder_context_updated: 'Responding context updated',
+  support_document_added: 'Supporting context added',
   finalized: 'Deal finalized',
 };
 
@@ -340,6 +345,7 @@ export default function RoomPage() {
   const [messagesAll] = useTable(tables.mediatorMessage);
   const [supportDocumentsAll] = useTable(tables.supportDocument);
   const [clausesAll] = useTable(tables.agreementClause);
+  const [agreementDocumentsAll] = useTable(tables.agreementDocument);
   const [eventsAll] = useTable(tables.event);
   const [presenceAll] = useTable(tables.presence);
 
@@ -352,13 +358,12 @@ export default function RoomPage() {
   const submitProposal = useReducer(reducers.submitAgentProposal);
   const acceptProposal = useReducer(reducers.acceptProposal);
   const rejectProposal = useReducer(reducers.rejectProposal);
-  const acceptCurrentTerms = useReducer(reducers.acceptCurrentTerms);
   const setPartyLabelReducer = useReducer(reducers.setPartyLabel);
   const confirmTermDefinitions = useReducer(reducers.confirmTermDefinitions);
   const setPartyContext = useReducer(reducers.setPartyContext);
   const sendMessage = useReducer(reducers.sendMediatorMessage);
   const addSupportDocument = useReducer(reducers.addSupportDocument);
-  const setClauseResolution = useReducer(reducers.setClauseResolution);
+  const saveAgreementDraft = useReducer(reducers.saveAgreementDraft);
 
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -415,6 +420,10 @@ export default function RoomPage() {
   const clauses = useMemo(
     () => [...clausesAll].filter(item => item.negotiationId === negId).sort((a, b) => a.sortOrder - b.sortOrder),
     [clausesAll, negId]
+  );
+  const agreementDocument = useMemo(
+    () => neg ? [...agreementDocumentsAll].find(document => document.negotiationId === neg.id) : undefined,
+    [agreementDocumentsAll, neg]
   );
   const negEvents = useMemo(
     () => [...eventsAll].filter(e => e.negotiationId === negId).sort((a, b) => Number(b.createdAt.microsSinceUnixEpoch - a.createdAt.microsSinceUnixEpoch)),
@@ -635,18 +644,39 @@ export default function RoomPage() {
         perspective: data.perspective ?? perspective,
         requestedByPartyId: myParty?.id ?? 0n,
       });
-      for (const clause of data.clauses ?? []) {
-        try {
-          await setClauseResolution({ clauseId: BigInt(clause.clauseId), resolution: clause.resolution });
-        } catch {
-          // Clause rows may not exist for legacy matters; the term proposal remains usable.
-        }
-      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Mediation failed');
     } finally {
       setMediating(false);
     }
+  };
+
+  const requestAgreementDraft = async (overrides?: {
+    responderContext?: string;
+    addedDocuments?: Array<{ name: string; mimeType: string; content: string }>;
+  }) => {
+    if (!neg || !agreementDocument || clauses.length === 0 || neg.status === 'agreed') return;
+    const snapshot = buildSnapshot();
+    if (overrides?.responderContext !== undefined) snapshot.responderContext = overrides.responderContext;
+    if (overrides?.addedDocuments?.length) snapshot.supportDocuments = [...snapshot.supportDocuments, ...overrides.addedDocuments];
+    const response = await fetch('/api/agreement-draft', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...snapshot,
+        currentContent: agreementDocument.content,
+        clauses: clauses.map(clause => ({ id: String(clause.id), title: clause.title, text: clause.resolution })),
+      }),
+    });
+    if (!response.ok) throw new Error(await response.text());
+    const result = await response.json() as { summary: string; content: string; sections: Array<{ id: string; title: string; body: string }> };
+    await saveAgreementDraft({
+      negotiationId: neg.id,
+      baseRevision: agreementDocument.revision,
+      content: result.content,
+      clauses: JSON.stringify(result.sections),
+      summary: result.summary,
+    });
   };
 
   const onSendMessage = async (e: React.FormEvent) => {
@@ -680,6 +710,9 @@ export default function RoomPage() {
       for (const document of documents) {
         await addSupportDocument({ negotiationId: neg.id, ...document });
       }
+      await requestAgreementDraft({
+        addedDocuments: documents.map(document => ({ name: document.name, mimeType: document.mimeType, content: document.content })),
+      });
       setSupportContent('');
       setSupportMime('text/plain');
       setSupportData(new Uint8Array());
@@ -697,6 +730,7 @@ export default function RoomPage() {
     setError(null);
     try {
       await setPartyContext({ negotiationId: neg.id, context: responderContextDraft });
+      await requestAgreementDraft({ responderContext: responderContextDraft });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not save context');
     } finally {
@@ -990,24 +1024,9 @@ export default function RoomPage() {
             >
               Make offer
             </button>
-            {myParty && (
-              <button
-                type="button"
-                className="btn ok"
-                 disabled={busy !== null || (myParty.side === 'a' ? neg.acceptedByA : neg.acceptedByB)}
-                onClick={async () => {
-                  setBusy('Recording acceptance…');
-                  try { await acceptCurrentTerms({ negotiationId: neg.id }); }
-                  catch (err) { setError(err instanceof Error ? err.message : 'Could not accept terms'); }
-                  finally { setBusy(null); }
-                }}
-              >
-                {(myParty.side === 'a' ? neg.acceptedByA : neg.acceptedByB) ? 'Accepted by you' : 'Accept latest terms'}
-              </button>
-            )}
             <Link href={`/room/${code}/agreement`} className="btn ghost">Open working agreement</Link>
           </div>
-          <p className="muted">Initiating party: {neg.acceptedByA ? 'accepted' : 'awaiting'} · Responding party: {neg.acceptedByB ? 'accepted' : 'awaiting'}. The matter is agreed only after both accept.</p>
+          <p className="muted">Final acceptance happens on the shared agreement page and always applies to one exact revision.</p>
           {latestPendingOffer && myParty && (
             <div className="action-bar">
               <div className="offer-summary">
