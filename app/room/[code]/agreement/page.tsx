@@ -1,11 +1,11 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useReducer, useSpacetimeDB, useTable } from 'spacetimedb/react';
-import { jsPDF } from 'jspdf';
 import { reducers, tables } from '../../../../src/module_bindings';
+import { createAgreementPdf } from '../../../../lib/agreement-pdf';
 
 type DraftSection = { id: string; title: string; body: string };
 type DiffLine = { type: 'same' | 'add' | 'remove'; text: string };
@@ -122,8 +122,14 @@ export default function AgreementPage() {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [drafting, setDrafting] = useState(false);
+  const [signatureDialogOpen, setSignatureDialogOpen] = useState(false);
+  const [signerAEmail, setSignerAEmail] = useState('');
+  const [signerBEmail, setSignerBEmail] = useState('');
+  const [sendingForSignature, setSendingForSignature] = useState(false);
+  const [signatureSent, setSignatureSent] = useState(false);
 
   const locked = negotiation?.status === 'agreed';
+  const canSendForSignature = locked && mySide === 'a';
   const mineAccepted = document && (mySide === 'a'
     ? document.acceptedByA && document.acceptedRevisionA === document.revision
     : document.acceptedByB && document.acceptedRevisionB === document.revision);
@@ -251,16 +257,40 @@ export default function AgreementPage() {
     }
   };
 
+  const sendForSignature = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!negotiation || !document || !canSendForSignature) return;
+    setSendingForSignature(true);
+    setError(null);
+    try {
+      const response = await fetch('/api/documenso/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          roomId: negotiation.joinCode,
+          signerAEmail,
+          signerBEmail,
+        }),
+      });
+      const result = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(result.error ?? 'Could not send the agreement for signature');
+      setSignatureSent(true);
+      setSignatureDialogOpen(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not send the agreement for signature');
+    } finally {
+      setSendingForSignature(false);
+    }
+  };
+
   const downloadPdf = () => {
     if (!document || !negotiation) return;
-    const pdf = new jsPDF();
-    const lines = pdf.splitTextToSize(document.content, 175);
-    pdf.setFontSize(16);
-    pdf.text(negotiation.title, 18, 20);
-    pdf.setFontSize(10);
-    pdf.text(`Settle agreement · ${negotiation.joinCode} · Revision ${String(document.revision)}`, 18, 28);
-    pdf.setFontSize(11);
-    pdf.text(lines, 18, 42);
+    const { pdf } = createAgreementPdf({
+      title: negotiation.title,
+      roomId: negotiation.joinCode,
+      revision: String(document.revision),
+      content: document.content,
+    });
     pdf.save(`${negotiation.joinCode.toLowerCase()}-agreement.pdf`);
   };
 
@@ -336,7 +366,34 @@ export default function AgreementPage() {
         )}
         <p className="muted">Initiating party: {document.acceptedByA && document.acceptedRevisionA === document.revision ? 'accepted' : 'awaiting'} · Responding party: {document.acceptedByB && document.acceptedRevisionB === document.revision ? 'accepted' : 'awaiting'}</p>
         {locked && <p className="provider-status">This revision is locked because both parties accepted it.</p>}
-        <button type="button" className="btn ghost" onClick={downloadPdf}>Download PDF</button>
+        <div className="row">
+          <button type="button" className="btn ghost" onClick={downloadPdf}>Download PDF</button>
+          {canSendForSignature && !signatureSent && (
+            <button type="button" className="btn" onClick={() => setSignatureDialogOpen(value => !value)}>
+              {signatureDialogOpen ? 'Cancel signature request' : 'Send for electronic signature'}
+            </button>
+          )}
+          {signatureSent && <span className="tag agreed">Sent for signature</span>}
+        </div>
+        {signatureDialogOpen && canSendForSignature && (
+          <form className="panel stack" onSubmit={sendForSignature}>
+            <div>
+              <h2>Send for electronic signature</h2>
+              <p className="muted">Documenso will email both parties this locked agreement.</p>
+            </div>
+            <label className="field-row">
+              Initiating party email
+              <input type="email" value={signerAEmail} onChange={event => setSignerAEmail(event.target.value)} required />
+            </label>
+            <label className="field-row">
+              Responding party email
+              <input type="email" value={signerBEmail} onChange={event => setSignerBEmail(event.target.value)} required />
+            </label>
+            <button type="submit" className="btn" disabled={sendingForSignature}>
+              {sendingForSignature ? 'Sending to Documenso…' : 'Send signing request'}
+            </button>
+          </form>
+        )}
       </section>
 
       {pendingDraft && !locked && (

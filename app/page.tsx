@@ -71,7 +71,7 @@ export default function HomePage() {
 
   const validate = () => {
     if (title.trim().length < 3) return 'Give the matter a title of at least 3 characters.';
-    if (rentalContext.trim().length < 20) return 'Describe the rental situation in at least 20 characters. Attachments are optional.';
+    if (rentalContext.trim().length < 10) return 'Describe the rental situation in at least 10 characters. Attachments are optional.';
     if (partyALabel.trim().length < 2) {
       return 'The initiating party label is required.';
     }
@@ -327,7 +327,7 @@ export default function HomePage() {
           </div>
 
           <label>
-            Rental context (atleast 20 characters)
+            Rental context
             <textarea
               rows={6}
               value={rentalContext}
@@ -389,7 +389,7 @@ export default function HomePage() {
             </p>
             <div className="compact-term-list">
               {terms.map((item, index) => (
-                <div className="compact-term-row" key={`${item.name}-${index}`}>
+                <div className="compact-term-row" key={index}>
                   <input
                     aria-label={`Term ${index + 1} name`}
                     value={item.name}
